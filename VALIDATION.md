@@ -4,7 +4,7 @@
 
 ## Automated verification
 
-`npm test`: 28 tests pass, including a PostgreSQL/Better Auth integration suite.
+`npm test`: 39 tests pass, including a PostgreSQL/Better Auth integration suite.
 
 - Title-only capture; independent Standard/Downtime/Ongoing classifications.
 - Supported dates, explicit weekday semantics, Adelaide day boundaries/DST, month-end clamping, leap years and year rollover.
@@ -44,13 +44,23 @@ Phase 1/2 additions verified:
 - Multi-tag intersection matching with case/whitespace normalisation.
 - React/DOM interactions: context changes reset metadata; project capture links the task; Reset to Inbox preserves title and clears project; bucket selection persists during consecutive capture; multi-tag filtering; optimistic completion before the response arrives without a workspace GET; failed completion restores state; Escape closes the optional date menu.
 
-Scope: this implements phases 1 and 2 of the uploaded personal workspace brief. Phase 3 People & Teams and Meeting View are not introduced. Existing later productivity features are preserved.
+Phases 3/4 verification:
+
+- Migration 005 on populated data, legacy assignment backfill and unchanged task status/title/deadline.
+- Actual SQL custom teams/people, multi-group membership, contact rename/archive, archived-link retention and cross-owner access rejection.
+- Associated person remains intact when delegating to a different person; reassignment/return preserve classification and actual deadline. Follow-up, notes, focus dismissal and snooze persist independently.
+- Visit timestamps persist without replacing other profile information.
+- Pure tests cover independent task types, meeting context, conservative team/person recognition, follow-up date semantics, team/person checklist membership without duplicates, bounded attention, deterministic ranking, eligible due delegation follow-ups, time filters, skip IDs, focus dismissal and seven-day welcome-back threshold.
+
+A simulated React/DOM interaction check also passed meeting-context capture, brief-note persistence, conversion to an action, Welcome back rendering and session-based recommendation skipping, alongside all earlier capture/filter/completion checks. This does not replace live browser/layout verification.
+
+Scope: phases 1–4 of the personal workspace brief; no AI integration.
 
 ## Remaining live checks
 
-- The change has not been deployed to Render or tested against its production database. The existing pre-deploy command runs the new numbered migration automatically; migrations 001, 002 and 003 are unchanged.
+- The change has not been deployed to Render or tested against its production database. The existing pre-deploy command runs the new numbered migration automatically; migrations 001–004 are unchanged.
 - Desktop and mobile visual/browser verification is outstanding. Chromium installation was attempted but the environment returned unusable downloads. DOM checks do not validate layout or real browser behaviour.
-- After merging the pull request, confirm GitHub checks pass, Render pre-deploy reports `Applied 003_buckets_tags.sql` and `Applied 004_core_simplicity.sql` (003 is skipped if already applied), and `/api/health` succeeds.
+- After merging the pull request, confirm GitHub checks pass, Render pre-deploy reports `Applied 005_people_productivity.sql` (earlier migrations are skipped if already applied), and `/api/health` succeeds.
 - Sign in with the existing account; verify legacy tasks/projects remain; capture several tasks consecutively; refresh and confirm persistence.
 - Try `Follow up next Friday`, `Downtime - tidy templates`, `Ongoing - improve MyAVM` and `Prepare goals in 2 weeks` and check the preview before saving.
 - Test Brain Dump, delegation/reassignment/return, date presets/custom date, effort/time suggestions, bucket and tag management, shared tag rename/merge, remembered capture bucket, grouped/flat Downtime, project milestones, snooze visibility and wake-up, search and completion on desktop and phone.

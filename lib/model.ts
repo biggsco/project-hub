@@ -1,3 +1,4 @@
+import { taskTypes } from "./people";
 import { z } from "zod";
 export const statuses = [
   "Inbox",
@@ -46,6 +47,11 @@ export const taskSchema = z.object({
   project_id: id.default(null),
   parent_id: id.default(null),
   bucket_id: id.default(null),
+  team_id: id.default(null),
+  person_id: id.default(null),
+  assigned_person_id: id.default(null),
+  task_type: z.enum(taskTypes).default("To Do"),
+  focus_dismissed_until: date.default(null),
   start_date: date.default(null),
   due_date: date.default(null),
   person: z.string().max(255).default(""),
@@ -130,8 +136,12 @@ export function stats(tasks: Task[], projects: Project[], day = today()) {
       (t) => t.due_date && t.due_date > day && t.due_date <= addDays(day, 7),
     ).length,
     high: open.filter((t) => ["High", "Critical"].includes(t.priority)).length,
-    waiting: open.filter((t) => t.status === "Waiting" || !!t.assigned_to)
-      .length,
+    waiting: open.filter(
+      (t) =>
+        t.status === "Waiting" ||
+        !!t.assigned_to ||
+        ["Delegated", "Follow Up"].includes(t.task_type),
+    ).length,
     projects: projects.filter((p) => p.status === "Active").length,
   };
 }
@@ -147,6 +157,10 @@ export function progress(tasks: Task[], id: string) {
 
 export const captureDefaultsSchema = z.object({
   bucket_id: id.optional(),
+  team_id: id.optional(),
+  person_id: id.optional(),
+  task_type: z.enum(taskTypes).optional(),
+  follow_up_date: date.optional(),
   project_id: id.optional(),
   classification: z
     .enum(["Inbox", "Standard", "Downtime", "Ongoing"])

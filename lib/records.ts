@@ -17,6 +17,7 @@ function normalise(row: Record<string, any>) {
     "date_assigned",
     "follow_up_date",
     "snoozed_until",
+    "focus_dismissed_until",
   ])
     if (row[k] instanceof Date) row[k] = row[k].toISOString().slice(0, 10);
   return row;
@@ -85,6 +86,69 @@ export async function writeRecord(
       )
         throw Error("Bucket unavailable");
     }
+    if (table === "tasks" && "task_type" in parsed) {
+      const previous = id
+        ? (
+            await c.query("select * from tasks where id=$1 and user_id=$2", [
+              id,
+              userId,
+            ])
+          ).rows[0]
+        : null;
+      for (const [field, tableName] of [
+        ["team_id", "teams"],
+        ["person_id", "people"],
+      ] as const) {
+        const selected = parsed[field];
+        if (!selected) continue;
+        const contact = (
+          await c.query(
+            `select * from ${tableName} where id=$1 and user_id=$2`,
+            [selected, userId],
+          )
+        ).rows[0];
+        if (!contact || (contact.archived && previous?.[field] !== selected))
+          throw Error("Contact unavailable");
+      }
+      if (
+        parsed.task_type === "Delegated" &&
+        !parsed.assigned_to &&
+        parsed.person_id
+      ) {
+        parsed.assigned_to = (
+          await c.query("select name from people where id=$1 and user_id=$2", [
+            parsed.person_id,
+            userId,
+          ])
+        ).rows[0].name;
+      }
+      if (parsed.assigned_to) {
+        const name = parsed.assigned_to.trim().replace(/\s+/g, " ");
+        const contact = (
+          await c.query(
+            "select * from people where user_id=$1 and name_key=lower($2)",
+            [userId, name],
+          )
+        ).rows[0];
+        if (contact?.archived && previous?.assigned_person_id !== contact.id)
+          throw Error("Contact unavailable");
+        const person =
+          contact ||
+          (
+            await c.query(
+              "insert into people(user_id,name) values($1,$2) returning *",
+              [userId, name],
+            )
+          ).rows[0];
+        parsed.assigned_person_id = person.id;
+        if (!parsed.person_id) parsed.person_id = person.id;
+        parsed.assigned_to = person.name;
+        parsed.task_type = "Delegated";
+      }
+      if (!parsed.assigned_to) parsed.assigned_person_id = null;
+      if (parsed.task_type === "Delegated" && !parsed.date_assigned)
+        parsed.date_assigned = today();
+    }
     const entries = Object.entries(parsed);
     const fields = entries.map(([k]) => k);
     const values = entries.map(([, v]) => v);
@@ -148,7 +212,14 @@ export async function captureTasks(
   const library = await organisationRecords(c);
   const values = lines.map((line) =>
     taskSchema.parse(
-      parseTaskInput(line, library.buckets, library.tags, today(now), defaults),
+      parseTaskInput(
+        line,
+        library.buckets,
+        library.tags,
+        today(now),
+        defaults,
+        library,
+      ),
     ),
   );
   const records: Task[] = [];

@@ -4,7 +4,7 @@ A private personal project manager running entirely on Render: Next.js, React, T
 
 ## Status
 
-The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` and `004_core_simplicity.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
+The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` `004_core_simplicity.sql` and `005_people_productivity.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
 
 Implemented: universal title-only Quick Add (Enter to save; Ctrl/Command+K or Q to focus), deterministic date/classification preview, date presets with optional custom calendar, Standard/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
 
@@ -29,7 +29,7 @@ Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import
 
 ## Phases 1 and 2 — Core simplicity and organisation
 
-These phases of the personal workspace brief are implemented. People & Teams, team/person associations, the new Discuss/Follow Up/Delegated types and Meeting View belong to Phase 3 and are not added here. Existing delegation and productivity features are retained.
+These phases of the personal workspace brief remain implemented; phases 3 and 4 extend them below.
 
 - Title + Enter creates an Inbox task with no deadline and no priority. Existing priorities are unchanged; `None` represents an unset priority on new tasks and is not shown as a badge.
 - Quick Add follows the current bucket, project, Downtime or Ongoing workspace. Bucket/project/work style/date/tag selections stay in place during consecutive entries within that context. Moving to a different view/bucket/project resets optional metadata to that context's defaults, while preserving the task draft and failed submissions.
@@ -41,7 +41,20 @@ These phases of the personal workspace brief are implemented. People & Teams, te
 - Escape closes optional date/bucket/tag menus. The global capture shortcut is retained, and Q does not intercept typing or focused interactive controls.
 - Phase 2 retains editable/reorderable/archiveable buckets, tag creation/autocomplete/rename/merge, grouped/flat Downtime, Ongoing work, bucket filtering, presets and deterministic parsing from the preceding upgrade.
 
-No new dependency or environment-variable changes are required. Migrations 001–003 are unchanged; the next additive migration is `004_core_simplicity.sql`.
+No new dependency or environment-variable changes are required. Migrations 001–004 are unchanged; the new additive migration is `005_people_productivity.sql`.
+
+## Phases 3 and 4 — People, conversations and getting started
+
+- People & Teams is a private directory, with editable/archiveable groups and people belonging to multiple groups. Starter groups are Technology Planning, Technology Systems, GM and Other People. No accounts, invitations or messages are created for contacts.
+- Tasks independently carry a team, associated person and task type: To Do, Discuss, Follow Up or Delegated. These do not replace status, classification, bucket or project. A separately tracked assignee preserves the original discussion person when an action is delegated to somebody else. Renaming an assignee updates assignment labels.
+- Team/person views prepare Quick Add for that context. Meeting View defaults new captures to Discuss and provides a persistent unresolved checklist with complete, convert to action, assign/reassign, follow-up and timestamped note actions. Completed items remain accessible in All associated tasks with the Completed status filter. Snoozed items leave the meeting checklist until they wake.
+- Known team aliases and exact known person wording can be recognised conservatively. Explicit `Follow Up -` or `Delegated -` relative dates become follow-up dates; ordinary `Follow up with IT next Friday` retains its existing deadline behaviour. Due dates remain independent. Quick Add previews recognised metadata.
+- What's Next uses deterministic priority, deadline, due-follow-up, next-action and recency rules. It excludes blocked, completed, archived, snoozed and future-starting work. Delegated tasks are suggested only as due follow-ups, never as work for you to perform. Time estimates are required when filtering to available time. Skip is remembered for the browser-tab session.
+- After seven days away, Welcome back appears with a bounded attention list, recent work and active projects. Hide from focus for a week removes an item from dashboard suggestions without deleting it or changing its deadline. Existing search/project access and snooze remain available.
+- Seven primary destinations keep navigation compact: Dashboard, Inbox, My Tasks, Projects, Downtime, People & Teams and Calendar. Ongoing, Waiting On, Completed/Archive and Settings remain under More views.
+- Existing effort, Quick Wins, available-time suggestions, Brain Dump, snooze and next actions are reused. No AI, new runtime dependencies or environment variables are added.
+
+Migration 005 adds owner-isolated teams, people and memberships, task links/types, dashboard focus dates and last-opened tracking. Existing assignments are backfilled into people; existing Waiting items become Follow Up. Titles, workflow status, classification, deadlines and existing records are retained. The existing Render pre-deploy migration command applies this change after merge.
 
 ## Buckets and shared tags
 
@@ -61,7 +74,7 @@ Starter buckets are Vectorworks (VWX), Momentus, MyAVM / SharePoint, Technology 
 - Brain Dump uses the same recognition/defaults. Preview rendering is capped at 200 entries before parsing/rendering, and oversized submissions are disabled. Retry IDs include the selected defaults, so a changed submission cannot accidentally reuse an old receipt. Successful retries clear prior error messages and return current task values.
 - Settings export now includes bucket/tag definitions along with task/project metadata. It remains a portability export, not a complete database backup.
 
-No environment-variable, Render plan, authentication or dependency changes are needed. Merge after checks pass; the existing pre-deploy command applies migrations 003 and 004. Live Render deployment and desktop/mobile visual verification are separate acceptance checks.
+No environment-variable, Render plan, authentication or dependency changes are needed. Merge after checks pass; the existing pre-deploy command applies any unapplied numbered migrations, including 005. Live Render deployment and desktop/mobile visual verification are separate acceptance checks.
 
 ## GitHub updates
 

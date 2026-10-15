@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { asUser } from "@/lib/db";
 import { loadRecords, writeRecord, captureTasks } from "@/lib/records";
+import { saveContact, recordVisit, peopleRecords } from "@/lib/people-records";
 import { z } from "zod";
 import { organise, organisationRecords } from "@/lib/organisation-records";
 export async function GET() {
@@ -33,6 +34,14 @@ export async function POST(req: NextRequest) {
     if (!user)
       return NextResponse.json({ error: "Sign in required" }, { status: 401 });
     const b = await req.json();
+    if (b.action === "visit")
+      return NextResponse.json(
+        await asUser(user.id, (c) => recordVisit(c, user.id)),
+      );
+    if (["team_save", "person_save"].includes(b.action))
+      return NextResponse.json({
+        record: await asUser(user.id, (c) => saveContact(c, user.id, b)),
+      });
     if (b.action === "capture") {
       const records = await asUser(user.id, (c) => captureTasks(c, user.id, b));
       return NextResponse.json({
@@ -47,10 +56,11 @@ export async function POST(req: NextRequest) {
     const table = z.enum(["tasks", "projects"]).parse(b.table);
     const action = z.enum(["save", "delete"]).parse(b.action);
     const id = b.id ? z.string().uuid().parse(b.id) : null;
-    const record = await asUser(user.id, (c) =>
-      writeRecord(c, user.id, table, action, b.value, id),
-    );
-    return NextResponse.json({ record });
+    const result = await asUser(user.id, async (c) => ({
+      record: await writeRecord(c, user.id, table, action, b.value, id),
+      ...(table === "tasks" ? await peopleRecords(c) : {}),
+    }));
+    return NextResponse.json(result);
   } catch (e) {
     const code = (e as { code?: string }).code;
     const message =

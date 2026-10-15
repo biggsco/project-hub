@@ -1,4 +1,6 @@
 "use client";
+import { taskTypes, type Team, type Person } from "@/lib/people";
+import PeoplePicker from "./people-picker";
 import { useEffect, useRef, useState } from "react";
 import {
   parseTaskInput,
@@ -25,6 +27,11 @@ export default function QuickAdd({
   contextKey,
   contextProject = null,
   projectName,
+  teams,
+  people,
+  contextTeam = null,
+  contextPerson = null,
+  meeting = false,
 }: {
   buckets: Bucket[];
   tags: Tag[];
@@ -34,7 +41,16 @@ export default function QuickAdd({
   contextKey: string;
   contextProject?: string | null;
   projectName?: string;
-  onCreated: (records: Task[], tags: Tag[]) => void;
+  teams: Team[];
+  people: Person[];
+  contextTeam?: string | null;
+  contextPerson?: string | null;
+  meeting?: boolean;
+  onCreated: (
+    records: Task[],
+    tags: Tag[],
+    directory?: { teams: Team[]; people: Person[] },
+  ) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const bulkLock = useRef(false);
@@ -54,22 +70,34 @@ export default function QuickAdd({
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [someday, setSomeday] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [teamId, setTeamId] = useState<string | null>(contextTeam);
+  const [personId, setPersonId] = useState<string | null>(contextPerson);
+  const [taskType, setTaskType] = useState<Task["task_type"]>("To Do");
+  const [followUp, setFollowUp] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const defaults: CaptureDefaults = {
     bucket_id: bucketId,
+    team_id: teamId,
+    person_id: personId,
+    task_type: taskType,
+    follow_up_date: followUp,
     classification,
     project_id: projectId,
     due_date: dueDate,
     tags: selectedTags,
     date_preferences: someday ? { due_date: "Someday" } : {},
   };
-  const parsed = parseTaskInput(text, buckets, tags, today(), defaults);
+  const parsed = parseTaskInput(text, buckets, tags, today(), defaults, {
+    teams,
+    people,
+  });
   const { count: previewCount, items: preview } = boundedPreview(
     dump,
     buckets,
     tags,
     today(),
     defaults,
+    { teams, people },
   );
   useEffect(() => {
     try {
@@ -82,6 +110,10 @@ export default function QuickAdd({
   }, []);
   function applyDefaults(values: CaptureDefaults) {
     setBucketId(values.bucket_id || null);
+    setTeamId(values.team_id || null);
+    setPersonId(values.person_id || null);
+    setTaskType(values.task_type || "To Do");
+    setFollowUp(null);
     setProjectId(values.project_id || null);
     setClassification(values.classification || "Standard");
     setDueDate(null);
@@ -95,16 +127,41 @@ export default function QuickAdd({
         contextSection,
         contextBucket || null,
         contextProject,
+        { team_id: contextTeam, person_id: contextPerson, meeting },
       ),
     );
-  }, [contextKey, contextSection, contextBucket, contextProject]);
+  }, [
+    contextKey,
+    contextSection,
+    contextBucket,
+    contextProject,
+    contextTeam,
+    contextPerson,
+    meeting,
+  ]);
+  useEffect(() => {
+    if (teamId && teams.find((t) => t.id === teamId)?.archived) setTeamId(null);
+    if (personId && people.find((p) => p.id === personId)?.archived)
+      setPersonId(null);
+  }, [teams, people, teamId, personId]);
   useEffect(() => {
     if (bucketId && buckets.find((b) => b.id === bucketId)?.archived)
       setBucketId(null);
   }, [buckets, bucketId]);
   useEffect(() => {
     setReceipt(null);
-  }, [bucketId, classification, dueDate, someday, selectedTags, projectId]);
+  }, [
+    bucketId,
+    classification,
+    dueDate,
+    someday,
+    selectedTags,
+    projectId,
+    teamId,
+    personId,
+    taskType,
+    followUp,
+  ]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       const editing = (e.target as HTMLElement).matches(
@@ -138,7 +195,10 @@ export default function QuickAdd({
       });
       const b = await r.json();
       if (!r.ok) throw Error(b.error || "Unable to capture tasks.");
-      onCreated(b.records, b.tags || []);
+      onCreated(b.records, b.tags || [], {
+        teams: b.teams || teams,
+        people: b.people || people,
+      });
       setError("");
       const used = b.records
         .map((t: Task) => t.bucket_id)
@@ -210,6 +270,29 @@ export default function QuickAdd({
         </button>
       </form>
       <div className="capture-controls">
+        <PeoplePicker
+          compact
+          teams={teams}
+          people={people}
+          teamId={teamId}
+          personId={personId}
+          onChange={(value) => {
+            setTeamId(value.team_id);
+            setPersonId(value.person_id);
+          }}
+        />
+        <div className="compact">
+          <span className="field-label">Task type</span>
+          <select
+            aria-label="Quick Add task type"
+            value={taskType}
+            onChange={(e) => setTaskType(e.target.value as Task["task_type"])}
+          >
+            {taskTypes.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+        </div>
         <BucketPicker
           compact
           buckets={buckets}
@@ -242,6 +325,14 @@ export default function QuickAdd({
           }}
           natural
         />
+        {["Follow Up", "Delegated"].includes(taskType) && (
+          <SmartDate
+            label="Quick Add follow-up date"
+            value={followUp}
+            onChange={setFollowUp}
+            natural
+          />
+        )}
         <TagPicker
           compact
           value={selectedTags}
@@ -269,7 +360,7 @@ export default function QuickAdd({
       <div className="capture-hint">
         <span>
           {text.trim()
-            ? `${parsed.classification}${parsed.project_id ? " · " + (projectName || "Project") : ""}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
+            ? `${parsed.task_type} · ${parsed.classification}${parsed.team_id ? " · " + teams.find((t) => t.id === parsed.team_id)?.name : ""}${parsed.person_id ? " · " + people.find((p) => p.id === parsed.person_id)?.name : ""}${parsed.follow_up_date ? " · Follow up " + parsed.follow_up_date : ""}${parsed.project_id ? " · " + (projectName || "Project") : ""}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
             : "Capture first, organise later. Focus with Ctrl / ⌘ K or Q."}
         </span>
         <button
@@ -332,7 +423,9 @@ export default function QuickAdd({
               <div key={i}>
                 <strong>{p.title}</strong>
                 <small>
-                  {p.classification} ·{" "}
+                  {p.task_type} · {p.classification} ·{" "}
+                  {teams.find((t) => t.id === p.team_id)?.name}{" "}
+                  {p.follow_up_date ? " · Follow up " + p.follow_up_date : ""} ·{" "}
                   {buckets.find((b) => b.id === p.bucket_id)?.name ||
                     "No bucket"}{" "}
                   · {p.due_date || "No deadline"} {p.tags.join(", ")}
