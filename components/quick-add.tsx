@@ -60,6 +60,7 @@ export default function QuickAdd({
   const input = useRef<HTMLInputElement>(null);
   const bulkLock = useRef(false);
   const [text, setText] = useState("");
+  const [literal, setLiteral] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [contentType, setContentType] = useState<Task["content_type"]>("Task");
   const [bulk, setBulk] = useState(false);
@@ -83,6 +84,7 @@ export default function QuickAdd({
   const [followUp, setFollowUp] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const defaults: CaptureDefaults = {
+    ...(literal ? { literal: true } : {}),
     content_type: contentType,
     bucket_id: bucketId,
     team_id: teamId,
@@ -117,6 +119,7 @@ export default function QuickAdd({
     } catch {}
   }, []);
   function applyDefaults(values: CaptureDefaults) {
+    setLiteral(false);
     setContentType(values.content_type || "Task");
     setBucketId(values.bucket_id || null);
     setTeamId(values.team_id || null);
@@ -324,7 +327,10 @@ export default function QuickAdd({
           autoComplete="off"
           value={text}
           maxLength={1000}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setLiteral(false);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && e.nativeEvent.isComposing)
               e.preventDefault();
@@ -337,114 +343,143 @@ export default function QuickAdd({
             : "Save " + contentType.toLowerCase()}
         </button>
       </form>
-      <div className="capture-controls">
-        <label className="compact">
-          Capture as
-          <select
-            aria-label="Capture content type"
-            value={contentType}
-            onChange={(e) =>
-              setContentType(e.target.value as Task["content_type"])
-            }
-          >
-            {["Task", "Idea", "Note"].map((t) => (
-              <option key={t}>{t}</option>
-            ))}
-          </select>
-        </label>
-        <PeoplePicker
-          compact
-          teams={teams}
-          people={people}
-          teamId={teamId}
-          personId={personId}
-          onChange={(value) => {
-            setTeamId(value.team_id);
-            setPersonId(value.person_id);
-          }}
-        />
-        <div className="compact">
-          <span className="field-label">Task type</span>
-          <select
-            aria-label="Quick Add task type"
-            value={taskType}
-            onChange={(e) => setTaskType(e.target.value as Task["task_type"])}
-          >
-            {taskTypes.map((t) => (
-              <option key={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-        <BucketPicker
-          compact
-          buckets={buckets}
-          value={bucketId}
-          onChange={setBucketId}
-          onCreate={onCreateBucket}
-          recent={recent}
-        />
-        <div className="compact">
-          <span className="field-label">Work style</span>
-          <select
-            aria-label="Quick Add classification"
-            value={classification}
-            onChange={(e) =>
-              setClassification(e.target.value as Task["classification"])
-            }
-          >
-            {["Standard", "Downtime", "Ongoing"].map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-        </div>
-        <SmartDate
-          label="Quick Add due date"
-          value={dueDate}
-          someday={someday}
-          onChange={(date, some) => {
-            setDueDate(date);
-            setSomeday(!!some);
-          }}
-          natural
-        />
-        {["Follow Up", "Delegated"].includes(taskType) && (
+      <details className="capture-options">
+        <summary>Options</summary>
+        <div className="capture-controls">
+          <label className="compact">
+            Capture as
+            <select
+              aria-label="Capture content type"
+              value={contentType}
+              onChange={(e) =>
+                setContentType(e.target.value as Task["content_type"])
+              }
+            >
+              {["Task", "Idea", "Note"].map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+          <PeoplePicker
+            compact
+            teams={teams}
+            people={people}
+            teamId={teamId}
+            personId={personId}
+            onChange={(value) => {
+              setTeamId(value.team_id);
+              setPersonId(value.person_id);
+            }}
+          />
+          <div className="compact">
+            <span className="field-label">Task type</span>
+            <select
+              aria-label="Quick Add task type"
+              value={taskType}
+              onChange={(e) => setTaskType(e.target.value as Task["task_type"])}
+            >
+              {taskTypes.map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+          <BucketPicker
+            compact
+            buckets={buckets}
+            value={bucketId}
+            onChange={setBucketId}
+            onCreate={onCreateBucket}
+            recent={recent}
+          />
+          <div className="compact">
+            <span className="field-label">Work style</span>
+            <select
+              aria-label="Quick Add classification"
+              value={classification}
+              onChange={(e) =>
+                setClassification(e.target.value as Task["classification"])
+              }
+            >
+              {["Standard", "Downtime", "Ongoing"].map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </div>
           <SmartDate
-            label="Quick Add follow-up date"
-            value={followUp}
-            onChange={setFollowUp}
+            label="Quick Add due date"
+            value={dueDate}
+            someday={someday}
+            onChange={(date, some) => {
+              setDueDate(date);
+              setSomeday(!!some);
+            }}
             natural
           />
-        )}
-        <TagPicker
-          compact
-          value={selectedTags}
-          tags={tags}
-          onChange={setSelectedTags}
-        />
-      </div>
-      <div className="capture-context">
-        {projectId && (
-          <span className="chip">
-            Project: {projectName || "Selected project"}
-          </span>
-        )}
-        <button
-          type="button"
-          className="text-button"
-          onClick={() => {
-            applyDefaults(captureContextDefaults("Inbox"));
-            input.current?.focus();
-          }}
-        >
-          Reset to Inbox
-        </button>
-      </div>
+          {["Follow Up", "Delegated"].includes(taskType) && (
+            <SmartDate
+              label="Quick Add follow-up date"
+              value={followUp}
+              onChange={setFollowUp}
+              natural
+            />
+          )}
+          <TagPicker
+            compact
+            value={selectedTags}
+            tags={tags}
+            onChange={setSelectedTags}
+          />
+        </div>
+        <div className="capture-context">
+          {projectId && (
+            <span className="chip">
+              Project: {projectName || "Selected project"}
+            </span>
+          )}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              applyDefaults(captureContextDefaults("Inbox"));
+              input.current?.focus();
+            }}
+          >
+            Reset to Inbox
+          </button>
+        </div>
+      </details>
       <div className="capture-hint">
         <span>
           {text.trim()
-            ? `${parsed.task_type} · ${parsed.classification}${parsed.team_id ? " · " + teams.find((t) => t.id === parsed.team_id)?.name : ""}${parsed.person_id ? " · " + people.find((p) => p.id === parsed.person_id)?.name : ""}${parsed.follow_up_date ? " · Follow up " + parsed.follow_up_date : ""}${parsed.project_id ? " · " + (projectName || "Project") : ""}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
-            : "Capture first, organise later. Q focuses capture; Ctrl / ⌘ K opens commands."}
+            ? [
+                parsed.team_id &&
+                  teams.find((t) => t.id === parsed.team_id)?.name,
+                parsed.bucket_id &&
+                  buckets.find((b) => b.id === parsed.bucket_id)?.name,
+                parsed.task_type !== "To Do" && parsed.task_type,
+                parsed.follow_up_date && `Follow up ${parsed.follow_up_date}`,
+                parsed.due_date && `Due ${parsed.due_date}`,
+                "suggested_start" in parsed &&
+                  parsed.suggested_start &&
+                  `Flexible ${parsed.suggested_start}–${parsed.suggested_end}`,
+                "recurrence_rule" in parsed &&
+                  parsed.recurrence_rule &&
+                  "Repeats",
+                parsed.tags.length > 0 && parsed.tags.join(", "),
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : "Capture first. Organise later."}
         </span>
+        {text.trim() && parsed.title !== text.trim() && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setLiteral(true)}
+          >
+            Use original text
+          </button>
+        )}
         <button
           className="text-button"
           onClick={() => setBulk(!bulk)}

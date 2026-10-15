@@ -145,6 +145,8 @@ export default function CommandBar({
     "Dashboard",
     "Inbox",
     "My Tasks",
+    "Suggested Plan",
+    "Focus tools",
     "Projects",
     "Downtime",
     "People & Teams",
@@ -154,8 +156,20 @@ export default function CommandBar({
     "Achievements",
     "Ideas & Notes",
   ]) {
-    if (!q || s.toLowerCase().includes(q))
-      results.push({ id: s, label: `Go to ${s}`, run: () => onNavigate(s) });
+    const label =
+      s === "Dashboard"
+        ? "Home"
+        : s === "People & Teams"
+          ? "People"
+          : s === "My Tasks"
+            ? "Work"
+            : s;
+    if (!q || label.toLowerCase().includes(q) || s.toLowerCase().includes(q))
+      results.push({
+        id: s,
+        label: `Go to ${label}`,
+        run: () => onNavigate(s),
+      });
   }
   function run(i: number) {
     const result = results[i];

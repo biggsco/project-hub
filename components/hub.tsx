@@ -1,4 +1,8 @@
 "use client";
+import NotificationSettingsPanel from "./notification-settings";
+import SuggestedPlan from "./suggested-plan";
+import RecurrenceControls from "./recurrence-controls";
+import CalmHome from "./calm-home";
 import Achievements from "./achievements";
 import FollowUpRadar from "./follow-up-radar";
 import WeeklyReset from "./weekly-reset";
@@ -97,12 +101,14 @@ export default function Hub({
   email: string;
   initialProject?: string;
 }) {
+  const [series, setSeries] = useState<any[]>([]);
   const [teams, setTeams] = useState<Team[]>([]),
     [people, setPeople] = useState<Person[]>([]);
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null),
     [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [meeting, setMeeting] = useState(false),
     [typeFilter, setTypeFilter] = useState("");
+  const [inboxScope, setInboxScope] = useState("all");
   const [delegationFilter, setDelegationFilter] = useState("");
   const [welcomeBack, setWelcomeBack] = useState(false);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
@@ -113,6 +119,7 @@ export default function Hub({
   const pendingTaskIds = useRef(new Set<string>());
   const [pendingTasks, setPendingTasks] = useState<string[]>([]);
   const drawerRef = useRef<HTMLElement>(null);
+  const openedTaskLink = useRef<string | null>(null);
   const [effortFilter, setEffortFilter] = useState("");
   const [assignmentFilter, setAssignmentFilter] = useState("");
   const [classificationFilter, setClassificationFilter] = useState("");
@@ -194,6 +201,15 @@ export default function Hub({
     window.addEventListener("popstate", back);
     return () => window.removeEventListener("popstate", back);
   }, []);
+  useEffect(() => {
+    if (loading) return;
+    const id = new URLSearchParams(location.search).get("task");
+    if (id && openedTaskLink.current !== id) {
+      const task = tasks.find((t) => t.id === id);
+      openedTaskLink.current = id;
+      if (task) edit(task);
+    }
+  }, [loading, tasks]);
   async function load() {
     try {
       const r = await fetch("/api/data");
@@ -207,6 +223,7 @@ export default function Hub({
         ),
       );
       setProjects(b.projects);
+      setSeries(b.series || []);
       setTeams(b.teams || []);
       setPeople(b.people || []);
       setActivity(b.activity);
@@ -505,9 +522,15 @@ export default function Hub({
           }
           if (
             section === "Inbox" &&
-            (t.classification !== "Standard" ||
-              t.status !== "Inbox" ||
-              !!t.assigned_to)
+            (t.status !== "Inbox" ||
+              (inboxScope === "unorganised" &&
+                !!(
+                  t.project_id ||
+                  t.bucket_id ||
+                  t.team_id ||
+                  t.person_id ||
+                  t.assigned_to
+                )))
           )
             return false;
           if (
@@ -661,6 +684,7 @@ export default function Hub({
       people,
       typeFilter,
       delegationFilter,
+      inboxScope,
     ],
   );
   function taskRow(t: Task, focus = false) {
@@ -688,7 +712,7 @@ export default function Hub({
         >
           <strong>{t.title}</strong>
           {t.content_type !== "Task" && <small>{t.content_type}</small>}
-          <small>
+          <small className="row-metadata">
             {projects.find((p) => p.id === t.project_id)?.name || "Personal"}
             {t.parent_id ? " · Subtask" : ""}
             {t.task_type !== "To Do" ? " · " + t.task_type : ""}
@@ -824,7 +848,13 @@ export default function Hub({
     );
   }
   const project = projects.find((p) => p.id === selectedProject);
-  const title = project?.name || section;
+  const title =
+    project?.name ||
+    (section === "Dashboard"
+      ? "Home"
+      : section === "People & Teams"
+        ? "People"
+        : section);
   return (
     <div className={"app " + (collapsed ? "collapsed" : "")}>
       <aside className={mobile ? "mobile-open" : ""}>
@@ -833,72 +863,38 @@ export default function Hub({
           <b>Project Hub</b>
         </a>
         <p className="eyebrow sidebar-label">MY WORKSPACE</p>
-        <nav>
-          {nav
-            .filter(
-              ([s]) =>
-                ![
-                  "Ongoing",
-                  "Delegated / Waiting On",
-                  "Completed / Archive",
-                  "Settings",
-                  "Ideas & Notes",
-                  "Follow-up Radar",
-                  "Weekly Reset",
-                  "Achievements",
-                ].includes(s),
-            )
-            .map(([s, Icon]) => (
-              <button
-                key={s}
-                className={section === s ? "active" : ""}
-                onClick={() => go(s)}
-              >
-                <Icon size={19} />
-                <span>{s}</span>
-                {s === "Inbox" && (
-                  <small>
-                    {
-                      tasks.filter(
-                        (t) =>
-                          !t.archived &&
-                          t.status === "Inbox" &&
-                          t.classification === "Standard" &&
-                          !t.assigned_to,
-                      ).length
-                    }
-                  </small>
-                )}
-              </button>
-            ))}
-          <details className="secondary-nav">
-            <summary>More views</summary>
-            {nav
-              .filter(([s]) =>
-                [
-                  "Ongoing",
-                  "Delegated / Waiting On",
-                  "Completed / Archive",
-                  "Settings",
-                  "Ideas & Notes",
-                  "Follow-up Radar",
-                  "Weekly Reset",
-                  "Achievements",
-                ].includes(s),
-              )
-              .map(([s, Icon]) => (
-                <button
-                  key={s}
-                  className={section === s ? "active" : ""}
-                  onClick={() => go(s)}
-                >
-                  <Icon size={19} />
-                  <span>{s}</span>
-                </button>
-              ))}
-          </details>
+        <nav aria-label="Primary navigation">
+          {[
+            ["Home", "Dashboard", LayoutDashboard],
+            ["Inbox", "Inbox", Inbox],
+            ["People", "People & Teams", Users],
+            ["Work", "My Tasks", FolderKanban],
+          ].map(([label, target, Icon]: any) => (
+            <button
+              key={label}
+              className={
+                (
+                  target === "My Tasks"
+                    ? ![
+                        "Dashboard",
+                        "Inbox",
+                        "People & Teams",
+                        "Settings",
+                      ].includes(section)
+                    : section === target
+                )
+                  ? "active"
+                  : ""
+              }
+              onClick={() => go(target)}
+            >
+              <Icon size={19} />
+              <span>{label}</span>
+            </button>
+          ))}
         </nav>
         <div className="sidebar-bottom">
+          <button onClick={() => go("Settings")}>Settings</button>
           <button onClick={() => setCollapsed(!collapsed)}>
             <PanelLeftClose size={18} />
             <span>Collapse sidebar</span>
@@ -993,6 +989,37 @@ export default function Hub({
           </button>
         </header>
         <div className="content">
+          {!["Dashboard", "Inbox", "People & Teams", "Settings"].includes(
+            section,
+          ) && (
+            <label className="work-view-switch">
+              Work
+              <select
+                aria-label="Work view"
+                value={section}
+                onChange={(e) => go(e.target.value)}
+              >
+                {[
+                  "My Tasks",
+                  "Suggested Plan",
+                  "Projects",
+                  "Downtime",
+                  "Ongoing",
+                  "Ideas & Notes",
+                  "Focus tools",
+                  "Delegated / Waiting On",
+                  "Follow-up Radar",
+                  "Calendar",
+                  "Weekly Reset",
+                  "Achievements",
+                  "Completed / Archive",
+                ].map((v) => (
+                  <option key={v}>{v}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <QuickAdd
             draftKey={`hub-capture:${email}`}
             buckets={buckets}
@@ -1101,6 +1128,7 @@ export default function Hub({
             <div className="empty">Loading your workspace…</div>
           ) : section === "Settings" ? (
             <div className="panel settings">
+              <NotificationSettingsPanel />
               <h2>Workspace settings</h2>
               <OrganisationManager
                 tasks={tasks}
@@ -1211,6 +1239,13 @@ export default function Hub({
                 Export data
               </button>
             </div>
+          ) : section === "Suggested Plan" ? (
+            <SuggestedPlan
+              tasks={tasks}
+              onPatch={patchTask}
+              onOpen={edit}
+              onComplete={completeTask}
+            />
           ) : section === "Achievements" ? (
             <Achievements
               tasks={tasks}
@@ -1240,49 +1275,24 @@ export default function Hub({
               }}
             />
           ) : section === "Dashboard" ? (
+            <CalmHome
+              tasks={tasks}
+              projects={projects}
+              teams={teams}
+              onOpen={edit}
+              onComplete={completeTask}
+              onTeam={(id) => {
+                go("People & Teams");
+                setSelectedTeam(id);
+                setMeeting(true);
+              }}
+              onProject={(p) => {
+                go("Projects");
+                setSelectedProject(p.id);
+              }}
+            />
+          ) : section === "Focus tools" ? (
             <>
-              <div className="conversation-shortcuts panel">
-                <h2>Your conversations</h2>
-                <div className="inline-actions">
-                  {teams
-                    .filter((t) => !t.archived)
-                    .slice(0, 6)
-                    .map((t) => (
-                      <button
-                        className="secondary"
-                        key={t.id}
-                        onClick={() => {
-                          go("People & Teams");
-                          setSelectedTeam(t.id);
-                          setMeeting(true);
-                        }}
-                      >
-                        {t.name}
-                      </button>
-                    ))}
-                  <button
-                    className="text-button"
-                    onClick={() => go("People & Teams")}
-                  >
-                    All people & teams
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() => go("Weekly Reset")}
-                  >
-                    Weekly Reset
-                  </button>
-                </div>
-              </div>
-              <FollowUpRadar
-                compact
-                tasks={tasks}
-                onAction={workbench}
-                onPatch={patchTask}
-                onComplete={completeTask}
-                onOpen={edit}
-                onExpand={() => go("Follow-up Radar")}
-              />
               <ProductivityDashboard
                 tasks={tasks}
                 projects={projects}
@@ -1302,24 +1312,6 @@ export default function Hub({
                   if (filter === "delegate") setAssignmentFilter("unassigned");
                 }}
               />
-              <details className="panel dashboard-details">
-                <summary>Recent activity & workspace counts</summary>
-                <p className="muted">
-                  {counts.today} due today · {counts.waiting} waiting on ·{" "}
-                  {counts.projects} active projects
-                </p>
-                {activity.slice(0, 6).map((a) => (
-                  <p key={a.id}>
-                    {a.title}{" "}
-                    <small className="muted">
-                      · {a.action} ·{" "}
-                      {new Date(a.created_at).toLocaleString("en-AU", {
-                        timeZone: "Australia/Adelaide",
-                      })}
-                    </small>
-                  </p>
-                ))}
-              </details>
             </>
           ) : section === "People & Teams" ? (
             <>
@@ -1654,163 +1646,176 @@ export default function Hub({
                     .map(projectCard)}
                 </div>
               )}
-              <div className="filters">
-                <select
-                  aria-label="Filter task type"
-                  value={typeFilter}
-                  onChange={(e) => setTypeFilter(e.target.value)}
-                >
-                  <option value="">All task types</option>
-                  {taskTypes.map((t) => (
-                    <option key={t}>{t}</option>
-                  ))}
-                </select>
-                {section === "Delegated / Waiting On" && (
+              <details className="task-filter-options">
+                <summary>Filters & view options</summary>
+                <div className="filters">
+                  {section === "Inbox" && (
+                    <select
+                      aria-label="Inbox scope"
+                      value={inboxScope}
+                      onChange={(e) => setInboxScope(e.target.value)}
+                    >
+                      <option value="all">All captured</option>
+                      <option value="unorganised">Unorganised</option>
+                    </select>
+                  )}
                   <select
-                    aria-label="Waiting view"
-                    value={delegationFilter}
-                    onChange={(e) => setDelegationFilter(e.target.value)}
+                    aria-label="Filter task type"
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value)}
                   >
-                    <option value="">All waiting / delegated</option>
-                    <option value="delegated">Delegated</option>
-                    <option value="followup">Follow Up</option>
-                    <option value="overdue">Overdue follow-ups</option>
-                  </select>
-                )}
-                <select
-                  aria-label="Filter bucket"
-                  value={bucketFilter}
-                  onChange={(e) => setBucketFilter(e.target.value)}
-                >
-                  <option value="">All buckets</option>
-                  <option value="none">Uncategorised</option>
-                  {buckets.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name}
-                      {b.archived ? " (archived)" : ""}
-                    </option>
-                  ))}
-                </select>
-                <TagFilter
-                  tags={tags}
-                  value={tagFilter}
-                  onChange={setTagFilter}
-                  label="Filter tag"
-                />
-                <select
-                  aria-label="Filter classification"
-                  value={classificationFilter}
-                  onChange={(e) => setClassificationFilter(e.target.value)}
-                >
-                  <option value="">All classifications</option>
-                  {classifications.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter effort"
-                  value={effortFilter}
-                  onChange={(e) => setEffortFilter(e.target.value)}
-                >
-                  <option value="">Any effort</option>
-                  <option value="quick">Quick Wins (up to 30 min)</option>
-                  {efforts.map(([n, label]) => (
-                    <option key={n} value={n}>
-                      Up to {label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter assignment"
-                  value={assignmentFilter}
-                  onChange={(e) => setAssignmentFilter(e.target.value)}
-                >
-                  <option value="">Any assignment</option>
-                  <option value="unassigned">
-                    {section === "Downtime"
-                      ? "Available to Delegate"
-                      : "Unassigned"}
-                  </option>
-                  {Array.from(
-                    new Set(tasks.map((t) => t.assigned_to).filter(Boolean)),
-                  )
-                    .sort()
-                    .map((name) => (
-                      <option key={name}>{name}</option>
+                    <option value="">All task types</option>
+                    {taskTypes.map((t) => (
+                      <option key={t}>{t}</option>
                     ))}
-                </select>
-                <label className="snooze-filter">
-                  <input
-                    type="checkbox"
-                    checked={showSnoozed}
-                    onChange={(e) => setShowSnoozed(e.target.checked)}
+                  </select>
+                  {section === "Delegated / Waiting On" && (
+                    <select
+                      aria-label="Waiting view"
+                      value={delegationFilter}
+                      onChange={(e) => setDelegationFilter(e.target.value)}
+                    >
+                      <option value="">All waiting / delegated</option>
+                      <option value="delegated">Delegated</option>
+                      <option value="followup">Follow Up</option>
+                      <option value="overdue">Overdue follow-ups</option>
+                    </select>
+                  )}
+                  <select
+                    aria-label="Filter bucket"
+                    value={bucketFilter}
+                    onChange={(e) => setBucketFilter(e.target.value)}
+                  >
+                    <option value="">All buckets</option>
+                    <option value="none">Uncategorised</option>
+                    {buckets.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                        {b.archived ? " (archived)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <TagFilter
+                    tags={tags}
+                    value={tagFilter}
+                    onChange={setTagFilter}
+                    label="Filter tag"
                   />
-                  Show snoozed
-                </label>
-                <select
-                  aria-label="Filter status"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                >
-                  <option value="">All statuses</option>
-                  {statuses.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter priority"
-                  value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
-                >
-                  <option value="">All priorities</option>
-                  <option value="High+">High and Critical</option>
-                  {priorities.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter project"
-                  value={projectFilter}
-                  onChange={(e) => setProjectFilter(e.target.value)}
-                >
-                  <option value="">All projects</option>
-                  {projects.map((p) => (
-                    <option value={p.id} key={p.id}>
-                      {p.name}
+                  <select
+                    aria-label="Filter classification"
+                    value={classificationFilter}
+                    onChange={(e) => setClassificationFilter(e.target.value)}
+                  >
+                    <option value="">All classifications</option>
+                    {classifications.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter effort"
+                    value={effortFilter}
+                    onChange={(e) => setEffortFilter(e.target.value)}
+                  >
+                    <option value="">Any effort</option>
+                    <option value="quick">Quick Wins (up to 30 min)</option>
+                    {efforts.map(([n, label]) => (
+                      <option key={n} value={n}>
+                        Up to {label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter assignment"
+                    value={assignmentFilter}
+                    onChange={(e) => setAssignmentFilter(e.target.value)}
+                  >
+                    <option value="">Any assignment</option>
+                    <option value="unassigned">
+                      {section === "Downtime"
+                        ? "Available to Delegate"
+                        : "Unassigned"}
                     </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter due date"
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                >
-                  <option value="">All dates</option>
-                  <option value="today">Due today</option>
-                  <option value="overdue">Overdue</option>
-                  <option value="week">Next 7 days</option>
-                </select>
-                <select
-                  aria-label="Sort tasks"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value)}
-                >
-                  <option value="due">Due date</option>
-                  <option value="followup">Follow-up date</option>
-                  <option value="title">Title</option>
-                  <option value="priority">Priority</option>
-                  <option value="effort">Effort</option>
-                  <option value="assignment">Assignment</option>
-                  <option value="status">Status</option>
-                  <option value="tags">Tags</option>
-                </select>
-                <button
-                  className="secondary"
-                  onClick={() => setView(view === "List" ? "Kanban" : "List")}
-                >
-                  {view === "List" ? "Kanban view" : "List view"}
-                </button>
-              </div>
+                    {Array.from(
+                      new Set(tasks.map((t) => t.assigned_to).filter(Boolean)),
+                    )
+                      .sort()
+                      .map((name) => (
+                        <option key={name}>{name}</option>
+                      ))}
+                  </select>
+                  <label className="snooze-filter">
+                    <input
+                      type="checkbox"
+                      checked={showSnoozed}
+                      onChange={(e) => setShowSnoozed(e.target.checked)}
+                    />
+                    Show snoozed
+                  </label>
+                  <select
+                    aria-label="Filter status"
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                  >
+                    <option value="">All statuses</option>
+                    {statuses.map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter priority"
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value)}
+                  >
+                    <option value="">All priorities</option>
+                    <option value="High+">High and Critical</option>
+                    {priorities.map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter project"
+                    value={projectFilter}
+                    onChange={(e) => setProjectFilter(e.target.value)}
+                  >
+                    <option value="">All projects</option>
+                    {projects.map((p) => (
+                      <option value={p.id} key={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Filter due date"
+                    value={dateFilter}
+                    onChange={(e) => setDateFilter(e.target.value)}
+                  >
+                    <option value="">All dates</option>
+                    <option value="today">Due today</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="week">Next 7 days</option>
+                  </select>
+                  <select
+                    aria-label="Sort tasks"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value)}
+                  >
+                    <option value="due">Due date</option>
+                    <option value="followup">Follow-up date</option>
+                    <option value="title">Title</option>
+                    <option value="priority">Priority</option>
+                    <option value="effort">Effort</option>
+                    <option value="assignment">Assignment</option>
+                    <option value="status">Status</option>
+                    <option value="tags">Tags</option>
+                  </select>
+                  <button
+                    className="secondary"
+                    onClick={() => setView(view === "List" ? "Kanban" : "List")}
+                  >
+                    {view === "List" ? "Kanban view" : "List view"}
+                  </button>
+                </div>
+              </details>
               {selected.length > 0 && (
                 <div className="bulk">
                   {selected.length} selected
@@ -2024,9 +2029,7 @@ export default function Hub({
               className="advanced-details"
             >
               <summary>
-                {editor.table === "tasks"
-                  ? "Task overview & advanced fields"
-                  : "Project fields"}
+                {editor.table === "tasks" ? "More Details" : "Project fields"}
               </summary>
               <form
                 onSubmit={async (e) => {
@@ -2037,6 +2040,108 @@ export default function Hub({
               >
                 {editor.table === "tasks" ? (
                   <>
+                    <RecurrenceControls
+                      task={editor.value}
+                      series={series.find(
+                        (s) => s.id === editor.value.recurrence_series_id,
+                      )}
+                      onChange={(recurrence_rule) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, recurrence_rule },
+                        })
+                      }
+                      onAction={(operation) =>
+                        manage({
+                          action: "recurrence",
+                          series_id: editor.value.recurrence_series_id,
+                          operation,
+                        })
+                      }
+                    />
+                    <label className="context-choice">
+                      <input
+                        type="checkbox"
+                        checked={editor.value.awaiting_decision}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              awaiting_decision: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                      Awaiting a decision
+                    </label>
+                    <label>
+                      Depends on
+                      <select
+                        value={editor.value.depends_on_id || ""}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              depends_on_id: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">No dependency</option>
+                        {tasks
+                          .filter(
+                            (t) =>
+                              t.id !== editor.id &&
+                              t.content_type === "Task" &&
+                              !t.archived,
+                          )
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <SmartDate
+                      label="Flexible work date"
+                      value={editor.value.planned_for}
+                      onChange={(planned_for) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, planned_for },
+                        })
+                      }
+                    />
+                    <label className="context-choice">
+                      <input
+                        type="checkbox"
+                        checked={editor.value.reminder_enabled}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              reminder_enabled: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                      Optional Teams reminder
+                    </label>
+                    {editor.value.reminder_enabled && (
+                      <SmartDate
+                        label="Reminder date"
+                        value={editor.value.reminder_on}
+                        onChange={(reminder_on) =>
+                          setEditor({
+                            ...editor,
+                            value: { ...editor.value, reminder_on },
+                          })
+                        }
+                      />
+                    )}
                     <Field
                       name="Title"
                       field="title"
@@ -2426,7 +2531,12 @@ export default function Hub({
                   </p>
                 )}
                 <div className="drawer-actions">
-                  <button className="primary" disabled={busy}>
+                  <button
+                    className="primary"
+                    disabled={
+                      busy || (!!editor.id && pendingTasks.includes(editor.id))
+                    }
+                  >
                     {busy ? "Saving…" : "Save changes"}
                   </button>
                   {editor.id && (
@@ -2473,8 +2583,8 @@ export default function Hub({
               </form>
             </details>
             {editor.id && (
-              <>
-                <h3>Recent activity</h3>
+              <details>
+                <summary>Task history</summary>
                 {activity
                   .filter((a) => a.entity_id === editor.id)
                   .slice(0, 5)
@@ -2486,7 +2596,7 @@ export default function Hub({
                       })}
                     </p>
                   ))}
-              </>
+              </details>
             )}
           </section>
         </div>

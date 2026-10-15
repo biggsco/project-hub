@@ -4,7 +4,7 @@
 
 ## Automated verification
 
-`npm test`: 49 tests pass, including a PostgreSQL/Better Auth integration suite.
+`npm test`: 58 tests pass, including a PostgreSQL/Better Auth integration suite.
 
 - Title-only capture; independent Standard/Downtime/Ongoing classifications.
 - Supported dates, explicit weekday semantics, Adelaide day boundaries/DST, month-end clamping, leap years and year rollover.
@@ -77,3 +77,16 @@ Scope: phases 1–5D. No AI integration, external transmission or automatic offl
 No Render resources were created or charged and no deployment secrets were changed. Existing administrative password recovery remains unchanged. Settings JSON export is not a complete database backup.
 
 Phase 5 live acceptance checks: verify saved progress/references/subtask ordering after refresh; review exclusions before copying a prompt; import supported lists; test physical-device PWA installation/dictation and capture recovery; record an actual discussion; try Radar follow-up/decision actions and Weekly Reset; verify achievements against known completion dates. Private records require the existing signed-in account. Browser/mobile layout and OS installation checks remain outstanding; no live production-database verification is claimed.
+
+## Coordinated simplification / smart automation upgrade
+
+- Populated-database migration 007 tested after 001–006; prior migrations are unchanged. TP alias appended without replacing existing aliases.
+- Pure tests cover source-of-truth and compound aliases, separate deadlines/follow-ups/flexible windows, invalid human dates, original-text override, natural recurrence, month-end and monthly-ordinal math, weekends/DST dates, bounded dependency-aware planning and unchanged deadlines.
+- Actual SQL tests cover independent recurring occurrence notes/status, missed-date coalescing, open-backlog cap, repeated generation without duplicates, pause/resume/stop, after-completion scheduling, dependency-cycle rejection and separate flexible work dates.
+- Notification tests cover authenticated owner isolation, encrypted URL storage, safe settings responses, enablement confirmation, unique digest keys, test cooldown, transactional duplicate-claim prevention, restart recovery to unknown, cancellation on disable, privacy payloads, Microsoft URL validation, redirects disabled, safe errors and bounded 429 retries. External delivery uses simulated HTTP responses; no live Teams request was sent.
+- Simulated React/DOM checks pass: exactly four primary destinations; calm Home; hidden capture options; typed date intent and original-text correction; workbench next action/progress/privacy-safe prompt/import; recurrence controls; Suggested Plan; meeting/achievements views; hidden Teams settings; command capture; lost-response retry. This verifies interactions, not pixel layout or physical-device behaviour.
+- TypeScript and production build pass. Existing Render build/start/pre-deploy commands remain unchanged. Scheduled Actions configuration is additive and safely skips when settings are missing.
+
+Manual setup remains: tenant trigger/anonymous-auth/personal-chat verification, creation of the Teams Workflow, storing its signed URL in app Settings, configuring HUB_JOB_SECRET in Render and matching PROJECT_HUB_JOB_SECRET plus PROJECT_HUB_URL in GitHub Actions, manually running the workflow and confirming actual delivery. The public guide at /teams-setup.html contains full instructions. No new Render service, AI API, premium HTTP trigger or subscription was provisioned.
+
+Scheduling limitations: Actions timing is best-effort and public-repository schedules can auto-disable after inactivity. No guaranteed-time scheduler is claimed. Outbound webhooks cannot guarantee exactly-once delivery; unknown outcomes are held rather than automatically resent. A successful webhook response does not establish that the later Teams posting action succeeded. Desktop/mobile browser layout, tenant access and live Render database/deployment remain unverified until inspected in those environments.

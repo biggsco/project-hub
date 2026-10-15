@@ -39,6 +39,7 @@ export default function TaskWorkbench({
         a.subtask_position - b.subtask_position ||
         a.created_at.localeCompare(b.created_at),
     );
+  const [description, setDescription] = useState(task.description);
   const [next, setNext] = useState(task.next_action),
     [note, setNote] = useState(""),
     [kind, setKind] = useState("progress"),
@@ -75,6 +76,10 @@ export default function TaskWorkbench({
     setUrl("");
     setLinkTitle("");
   }, [task.id]);
+  useEffect(
+    () => setDescription(task.description),
+    [task.id, task.description],
+  );
   const parts = promptContext(
     task,
     children,
@@ -133,7 +138,7 @@ export default function TaskWorkbench({
     <div className="task-workbench" key={task.id}>
       <section className="resume-work panel">
         <h3>Resume work</h3>
-        <p className="muted">
+        <p className="muted workbench-metadata">
           {task.content_type} · {task.status}
           {task.due_date ? ` · Due ${task.due_date}` : ""}
         </p>
@@ -158,7 +163,30 @@ export default function TaskWorkbench({
             .filter(Boolean)
             .join(" · ")}
         </p>
-        {task.description && <p className="task-note">{task.description}</p>}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await onPatch(task, { description }))
+              setMessage("Description saved");
+          }}
+        >
+          <label>
+            Description
+            <textarea
+              aria-label="Workbench description"
+              value={description}
+              maxLength={20000}
+              rows={2}
+              placeholder="Optional context…"
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </label>
+          {description !== task.description && (
+            <button className="secondary" disabled={busy}>
+              Save description
+            </button>
+          )}
+        </form>
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -176,12 +204,14 @@ export default function TaskWorkbench({
               placeholder="Smallest useful next step…"
             />
           </label>
-          <button
-            className="secondary"
-            disabled={busy || next === task.next_action}
-          >
-            Save next action
-          </button>
+          {next !== task.next_action && (
+            <button
+              className="secondary"
+              disabled={busy || next === task.next_action}
+            >
+              Save next action
+            </button>
+          )}
         </form>
         <p>
           {children.filter((t) => t.status !== "Completed").length} outstanding
@@ -219,16 +249,6 @@ export default function TaskWorkbench({
           Convert to task
         </button>
       )}
-      <label className="context-choice">
-        <input
-          type="checkbox"
-          checked={task.awaiting_decision}
-          onChange={(e) =>
-            onPatch(task, { awaiting_decision: e.target.checked })
-          }
-        />
-        Awaiting a decision
-      </label>
       <section>
         <h3>Progress</h3>
         <form
@@ -320,31 +340,36 @@ export default function TaskWorkbench({
                 if (e.key === "Enter") e.currentTarget.blur();
               }}
             />
-            <button
-              aria-label={`Move ${s.title} up`}
-              disabled={busy || i === 0}
-              onClick={() => {
-                const ids = children.map((t) => t.id);
-                [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-                action({ action: "subtasks_reorder", ids });
-              }}
-            >
-              ↑
-            </button>
-            <button
-              aria-label={`Move ${s.title} down`}
-              disabled={busy || i === children.length - 1}
-              onClick={() => {
-                const ids = children.map((t) => t.id);
-                [ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
-                action({ action: "subtasks_reorder", ids });
-              }}
-            >
-              ↓
-            </button>
-            <button className="text-button" onClick={() => onOpen(s)}>
-              Open
-            </button>
+            <details className="subtask-actions">
+              <summary aria-label={`Actions for ${s.title}`}>Actions</summary>
+              <div>
+                <button
+                  aria-label={`Move ${s.title} up`}
+                  disabled={busy || i === 0}
+                  onClick={() => {
+                    const ids = children.map((t) => t.id);
+                    [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+                    action({ action: "subtasks_reorder", ids });
+                  }}
+                >
+                  ↑
+                </button>
+                <button
+                  aria-label={`Move ${s.title} down`}
+                  disabled={busy || i === children.length - 1}
+                  onClick={() => {
+                    const ids = children.map((t) => t.id);
+                    [ids[i], ids[i + 1]] = [ids[i + 1], ids[i]];
+                    action({ action: "subtasks_reorder", ids });
+                  }}
+                >
+                  ↓
+                </button>
+                <button className="text-button" onClick={() => onOpen(s)}>
+                  Open
+                </button>
+              </div>
+            </details>
           </div>
         ))}
         <form
@@ -451,77 +476,79 @@ export default function TaskWorkbench({
         )}
       </section>
       <section>
-        <h3>Links & references</h3>
-        {task.reference_links.map((l) => (
-          <div className="reference-row" key={l.id}>
-            <a href={l.url} target="_blank" rel="noopener noreferrer">
-              {l.title}
-            </a>
-            <button
-              className="text-button"
-              onClick={() => {
-                setLinkId(l.id);
-                setLinkTitle(l.title);
-                setUrl(l.url);
-              }}
-            >
-              Edit
-            </button>
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() =>
-                action({ action: "reference_delete", reference_id: l.id })
+        <details>
+          <summary>Links & references ({task.reference_links.length})</summary>
+          {task.reference_links.map((l) => (
+            <div className="reference-row" key={l.id}>
+              <a href={l.url} target="_blank" rel="noopener noreferrer">
+                {l.title}
+              </a>
+              <button
+                className="text-button"
+                onClick={() => {
+                  setLinkId(l.id);
+                  setLinkTitle(l.title);
+                  setUrl(l.url);
+                }}
+              >
+                Edit
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  action({ action: "reference_delete", reference_id: l.id })
+                }
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (
+                await action({
+                  action: "reference_save",
+                  reference_id: linkId || crypto.randomUUID(),
+                  title: linkTitle,
+                  url,
+                })
+              ) {
+                setUrl("");
+                setLinkTitle("");
+                setLinkId(null);
+                setMessage("Reference saved");
               }
-            >
-              Remove
+            }}
+          >
+            <div className="two-cols">
+              <label>
+                Link title
+                <input
+                  value={linkTitle}
+                  maxLength={255}
+                  required
+                  onChange={(e) => setLinkTitle(e.target.value)}
+                />
+              </label>
+              <label>
+                URL
+                <input
+                  type="url"
+                  placeholder="https://…"
+                  value={url}
+                  maxLength={2000}
+                  required
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+              </label>
+            </div>
+            <button className="secondary" disabled={busy}>
+              {linkId ? "Save reference" : "Add reference"}
             </button>
-          </div>
-        ))}
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (
-              await action({
-                action: "reference_save",
-                reference_id: linkId || crypto.randomUUID(),
-                title: linkTitle,
-                url,
-              })
-            ) {
-              setUrl("");
-              setLinkTitle("");
-              setLinkId(null);
-              setMessage("Reference saved");
-            }
-          }}
-        >
-          <div className="two-cols">
-            <label>
-              Link title
-              <input
-                value={linkTitle}
-                maxLength={255}
-                required
-                onChange={(e) => setLinkTitle(e.target.value)}
-              />
-            </label>
-            <label>
-              URL
-              <input
-                type="url"
-                placeholder="https://…"
-                value={url}
-                maxLength={2000}
-                required
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </label>
-          </div>
-          <button className="secondary" disabled={busy}>
-            {linkId ? "Save reference" : "Add reference"}
-          </button>
-        </form>
+          </form>
+        </details>
       </section>
       <section>
         <button className="primary" onClick={develop}>
@@ -543,7 +570,11 @@ export default function TaskWorkbench({
                 }}
               >
                 {promptModes.map((m) => (
-                  <option key={m}>{m}</option>
+                  <option key={m} value={m}>
+                    {m === "Break into Steps"
+                      ? "Plan This Task / Break into Steps"
+                      : m}
+                  </option>
                 ))}
               </select>
             </label>

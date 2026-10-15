@@ -46,6 +46,10 @@ export function recommendTasks(
     .filter(
       (t) =>
         inFocus(t, day) &&
+        (!t.depends_on_id ||
+          tasks.some(
+            (p) => p.id === t.depends_on_id && p.status === "Completed",
+          )) &&
         !skipped.has(t.id) &&
         t.status !== "Blocked" &&
         (!t.start_date || t.start_date <= day) &&

@@ -1,3 +1,4 @@
+import { syncSeries } from "./recurrence-records";
 import {
   taskSchema,
   projectSchema,
@@ -18,6 +19,11 @@ function normalise(row: Record<string, any>) {
     "follow_up_date",
     "snoozed_until",
     "focus_dismissed_until",
+    "suggested_start",
+    "suggested_end",
+    "planned_for",
+    "reminder_on",
+    "recurrence_date",
   ])
     if (row[k] instanceof Date) row[k] = row[k].toISOString().slice(0, 10);
   return row;
@@ -33,11 +39,19 @@ export async function loadRecords(c: QueryClient) {
   const projects = await c.query(
     "select * from projects order by created_at desc",
   );
+  const series = await c.query(
+    "select id,rule,next_date,paused,stopped,skipped_count from recurring_series order by created_at desc",
+  );
   const activity = await c.query(
     "select * from activity order by created_at desc limit 100",
   );
   return {
     tasks: tasks.rows.map(normalise),
+    series: series.rows.map((row) => {
+      if (row.next_date instanceof Date)
+        row.next_date = row.next_date.toISOString().slice(0, 10);
+      return row;
+    }),
     projects: projects.rows.map(normalise),
     activity: activity.rows,
     ...(await organisationRecords(c)),
@@ -50,11 +64,20 @@ export async function writeRecord(
   action: "save" | "delete",
   value: unknown,
   id: string | null,
+  generated = false,
 ) {
   await c.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
     userId,
   ]);
   let result;
+  let previous: Task | undefined;
+  if (table === "tasks" && id)
+    previous = (
+      await c.query("select * from tasks where id=$1 and user_id=$2", [
+        id,
+        userId,
+      ])
+    ).rows[0];
   if (action === "delete") {
     if (!id) throw Error("Missing record");
     result = await c.query(
@@ -65,6 +88,30 @@ export async function writeRecord(
     const parsed = (table === "tasks" ? taskSchema : projectSchema).parse(
       value,
     );
+    if (table === "tasks" && "recurrence_rule" in parsed) {
+      if (!generated) {
+        parsed.recurrence_series_id = previous?.recurrence_series_id || null;
+        parsed.recurrence_date = previous?.recurrence_date
+          ? normalise({ ...previous }).recurrence_date
+          : null;
+      }
+      if (
+        parsed.suggested_start &&
+        parsed.suggested_end &&
+        parsed.suggested_end < parsed.suggested_start
+      )
+        throw Error("Invalid suggested window");
+      if (parsed.depends_on_id) {
+        const ancestors = (
+          await c.query(
+            "with recursive chain as (select id,depends_on_id from tasks where id=$1 and user_id=$2 union select t.id,t.depends_on_id from tasks t join chain a on t.id=a.depends_on_id where t.user_id=$2) select id from chain",
+            [parsed.depends_on_id, userId],
+          )
+        ).rows;
+        if (!ancestors.length || ancestors.some((a) => a.id === id))
+          throw Error("Invalid task dependency");
+      }
+    }
     if (table === "tasks" && "bucket_id" in parsed && parsed.bucket_id) {
       const bucket = (
         await c.query(
@@ -165,7 +212,7 @@ export async function writeRecord(
     const entries = Object.entries(parsed);
     const fields = entries.map(([k]) => k);
     const values = entries.map(([k, v]) =>
-      ["progress_entries", "reference_links"].includes(k)
+      ["progress_entries", "reference_links", "recurrence_rule"].includes(k)
         ? JSON.stringify(v)
         : v,
     );
@@ -183,7 +230,10 @@ export async function writeRecord(
   }
   if (result.rows.length !== 1)
     throw Error("Record not found or access denied");
-  return normalise(result.rows[0]);
+  const row = normalise(result.rows[0]);
+  return table === "tasks" && action === "save" && !generated
+    ? await syncSeries(c, userId, row as Task, previous)
+    : row;
 }
 
 // Called inside asUser: the whole batch and its retry receipt commit atomically.

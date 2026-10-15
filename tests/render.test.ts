@@ -7,6 +7,14 @@ import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
 import { organise, organisationRecords } from "../lib/organisation-records";
+import { advanceRecurring, recurrenceAction } from "../lib/recurrence-records";
+import {
+  saveNotificationSettings,
+  notificationSettings,
+  queueTest,
+} from "../lib/notification-records";
+import { enqueueForUser, claimDelivery } from "../lib/jobs";
+import { today } from "../lib/model";
 import { workbenchAction } from "../lib/workbench-records";
 import { saveContact, peopleRecords, recordVisit } from "../lib/people-records";
 import { provision } from "../lib/provision";
@@ -104,6 +112,9 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   );
   await pg.client.exec(
     await readFile("db/migrations/006_workbench.sql", "utf8"),
+  );
+  await pg.client.exec(
+    await readFile("db/migrations/007_simplify_automation.sql", "utf8"),
   );
   const migrated = (
     await c.query("select * from tasks where id=$1", [oldDelegation.id])
@@ -386,7 +397,7 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     new Date("2026-10-15T01:00:00Z"),
   );
   assert.equal(captured.length, 4);
-  assert.equal(captured[1].due_date, "2026-10-23");
+  assert.equal(captured[1].follow_up_date, "2026-10-23");
   assert.equal(captured[2].classification, "Downtime");
   assert.equal(captured[3].classification, "Ongoing");
   assert.equal(captured[3].due_date, "2026-10-29");
@@ -993,7 +1004,10 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   await c.query("update tasks set team_id=null where id=$1", [discussion.id]);
   const imported = await workbenchAction(c, owner, stepsInput);
   assert.equal(imported.records!.length, 2);
-  assert.equal((await workbenchAction(c, owner, stepsInput)).records!.length, 2);
+  assert.equal(
+    (await workbenchAction(c, owner, stepsInput)).records!.length,
+    2,
+  );
   const repeated = await workbenchAction(c, owner, {
     ...stepsInput,
     request_id: crypto.randomUUID(),
@@ -1026,7 +1040,10 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     follow_up_date: "2026-12-10",
   });
   assert.equal(chase.record.status, discussion.status);
-  assert.equal(new Date(chase.record.due_date).toISOString().slice(0,10), "2026-12-01");
+  assert.equal(
+    new Date(chase.record.due_date).toISOString().slice(0, 10),
+    "2026-12-01",
+  );
   assert.equal(chase.record.progress_entries.at(-1).kind, "follow_up");
   await pg.client.exec("COMMIT");
   await pg.client.exec(
@@ -1043,6 +1060,281 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
       ])
     ).rows.length,
     0,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const repeating = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Monthly review",
+      notes: "Original occurrence notes",
+      recurrence_rule: {
+        frequency: "monthly",
+        mode: "fixed",
+        start_date: "2026-01-31",
+      },
+    },
+    null,
+  );
+  assert.ok(repeating.recurrence_series_id);
+  const march = await advanceRecurring(c, owner, "2026-03-31");
+  assert.equal(march.length, 1);
+  assert.equal(march[0].due_date, "2026-03-31");
+  assert.equal(march[0].notes, "");
+  assert.equal(march[0].progress_entries.length, 0);
+  assert.equal((await advanceRecurring(c, owner, "2026-03-31")).length, 0);
+  assert.equal(
+    (await advanceRecurring(c, owner, "2026-05-31")).length,
+    0,
+    "fixed schedules cap the open backlog at two",
+  );
+  const scheduled = (
+    await c.query("select * from recurring_series where id=$1", [
+      repeating.recurrence_series_id,
+    ])
+  ).rows[0];
+  assert.ok(scheduled.skipped_count >= 2);
+  await recurrenceAction(c, owner, {
+    series_id: repeating.recurrence_series_id,
+    operation: "pause",
+  });
+  assert.equal((await advanceRecurring(c, owner, "2026-06-30")).length, 0);
+  await recurrenceAction(c, owner, {
+    series_id: repeating.recurrence_series_id,
+    operation: "resume",
+  });
+  await recurrenceAction(c, owner, {
+    series_id: repeating.recurrence_series_id,
+    operation: "stop",
+  });
+  await assert.rejects(
+    () =>
+      recurrenceAction(c, owner, {
+        series_id: repeating.recurrence_series_id,
+        operation: "resume",
+      }),
+    /Stopped recurrence/,
+  );
+  const afterCompletion = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "After completion",
+      recurrence_rule: {
+        frequency: "weekly",
+        mode: "after_completion",
+        start_date: today(),
+      },
+    },
+    null,
+  );
+  assert.equal(
+    (
+      await c.query("select next_date from recurring_series where id=$1", [
+        afterCompletion.recurrence_series_id,
+      ])
+    ).rows[0].next_date,
+    null,
+  );
+  const completedRecurring = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...afterCompletion,
+      status: "Completed",
+      notes: "Own completed occurrence",
+    },
+    afterCompletion.id,
+  );
+  const afterSeries = (
+    await c.query("select next_date from recurring_series where id=$1", [
+      afterCompletion.recurrence_series_id,
+    ])
+  ).rows[0];
+  assert.ok(afterSeries.next_date);
+  const nextAfter = new Date(afterSeries.next_date).toISOString().slice(0, 10);
+  const afterInstances = await advanceRecurring(c, owner, nextAfter);
+  assert.equal(afterInstances.length, 1);
+  assert.equal(afterInstances[0].notes, "");
+  assert.equal(afterInstances[0].status, "To Do");
+  assert.notEqual(afterInstances[0].id, completedRecurring.id);
+  const dependent = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Dependent task",
+      depends_on_id: afterCompletion.id,
+      planned_for: today(),
+    },
+    null,
+  );
+  await assert.rejects(
+    () =>
+      writeRecord(
+        c,
+        owner,
+        "tasks",
+        "save",
+        { ...completedRecurring, depends_on_id: dependent.id },
+        afterCompletion.id,
+      ),
+    /Invalid task dependency/,
+  );
+  const firm = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Keep deadline",
+      due_date: "2026-12-01",
+      suggested_start: "2026-10-19",
+      suggested_end: "2026-10-23",
+    },
+    null,
+  );
+  const moved = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...firm, planned_for: "2026-10-22" },
+    firm.id,
+  );
+  assert.equal(moved.due_date, "2026-12-01");
+  const notificationSecret = "test-encryption-secret-more-than-32-characters",
+    webhook =
+      "https://prod-01.australiasoutheast.logic.azure.com/workflows/test/triggers/manual/paths/invoke?sig=never-leak-this-secret";
+  await assert.rejects(
+    () =>
+      saveNotificationSettings(
+        c,
+        owner,
+        { value: { enabled: true }, webhook_url: webhook },
+        notificationSecret,
+      ),
+    /Confirm tenant/,
+  );
+  const notificationResult = await saveNotificationSettings(
+    c,
+    owner,
+    { value: { enabled: true, tenant_confirmed: true }, webhook_url: webhook },
+    notificationSecret,
+  );
+  assert.equal(notificationResult.settings.configured, true);
+  assert.ok(!JSON.stringify(notificationResult).includes("never-leak"));
+  const rawSettings = (
+    await c.query(
+      "select webhook_cipher from notification_settings where user_id=$1",
+      [owner],
+    )
+  ).rows[0];
+  assert.ok(
+    rawSettings.webhook_cipher &&
+      !rawSettings.webhook_cipher.includes("never-leak"),
+  );
+  await enqueueForUser(
+    c,
+    owner,
+    "https://hub.example",
+    new Date("2026-10-15T01:00:00Z"),
+  );
+  await enqueueForUser(
+    c,
+    owner,
+    "https://hub.example",
+    new Date("2026-10-15T01:01:00Z"),
+  );
+  assert.equal(
+    (
+      await c.query(
+        "select id from notification_deliveries where notification_key='daily:2026-10-15'",
+      )
+    ).rows.length,
+    1,
+  );
+  const testNotification = await queueTest(c, owner, "https://hub.example");
+  assert.equal(
+    await queueTest(c, owner, "https://hub.example"),
+    testNotification,
+    "test button has a server cooldown",
+  );
+  const claimed = await claimDelivery(c, owner, testNotification);
+  assert.equal(claimed.id, testNotification);
+  assert.equal(
+    await claimDelivery(c, owner, testNotification),
+    null,
+    "a claimed message cannot be sent twice by concurrent workers",
+  );
+  await c.query(
+    "update notification_deliveries set claimed_at=now()-interval '10 minutes' where id=$1",
+    [testNotification],
+  );
+  await enqueueForUser(
+    c,
+    owner,
+    "https://hub.example",
+    new Date("2026-10-15T02:00:00Z"),
+  );
+  const interrupted = (
+    await c.query(
+      "select status,payload from notification_deliveries where id=$1",
+      [testNotification],
+    )
+  ).rows[0];
+  assert.equal(interrupted.status, "unknown");
+  assert.deepEqual(interrupted.payload, {});
+  const safeSettings = await notificationSettings(c, owner);
+  assert.ok(!JSON.stringify(safeSettings).includes("never-leak"));
+  assert.ok(!JSON.stringify(safeSettings).includes("webhook_cipher"));
+  await saveNotificationSettings(
+    c,
+    owner,
+    { value: { enabled: false, tenant_confirmed: true } },
+    notificationSecret,
+  );
+  assert.equal(
+    (
+      await c.query(
+        "select id from notification_deliveries where status='pending'",
+      )
+    ).rows.length,
+    0,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  assert.equal(
+    (await c.query("select * from notification_settings")).rows.length,
+    0,
+  );
+  assert.equal(
+    (await c.query("select * from notification_deliveries")).rows.length,
+    0,
+  );
+  assert.equal(
+    (await c.query("select * from recurring_series")).rows.length,
+    0,
+  );
+  await assert.rejects(
+    () =>
+      recurrenceAction(c, other, {
+        series_id: repeating.recurrence_series_id,
+        operation: "pause",
+      }),
+    /Series unavailable/,
   );
   await pg.client.exec("COMMIT");
   await db.destroy();

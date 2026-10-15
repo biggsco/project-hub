@@ -1,3 +1,4 @@
+import { captureIntent } from "./capture-intent";
 import { taskTypes, type Directory } from "./people";
 import { canonicalTags, nameKey, type Bucket, type Tag } from "./organisation";
 import {
@@ -72,6 +73,33 @@ export function resolveDate(expression: string, day = today()): string | null {
       ? addMonths(day, n)
       : addDays(day, n * (relative[2].startsWith("week") ? 7 : 1));
   }
+  const human = s.match(
+    /^(\d{1,2}) (january|february|march|april|may|june|july|august|september|october|november|december)(?: (\d{4}))?$/,
+  );
+  if (human) {
+    const month =
+      [
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+      ].indexOf(human[2]) + 1;
+    let year = Number(human[3] || day.slice(0, 4));
+    let d = `${year}-${String(month).padStart(2, "0")}-${human[1].padStart(2, "0")}`;
+    if (!human[3] && d < day)
+      d = `${++year}-${String(month).padStart(2, "0")}-${human[1].padStart(2, "0")}`;
+    return taskSchema.safeParse({ title: "date", due_date: d }).success
+      ? d
+      : null;
+  }
   // Only ISO and explicit Australian day/month/year dates are accepted. No year guessing.
   let specific = s;
   const au = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -141,7 +169,13 @@ export function suitableTasks(tasks: Task[], minutes: number, day = today()) {
   return tasks
     .filter(
       (t) =>
-        actionable(t, day) && t.effort_minutes && t.effort_minutes <= minutes,
+        (!t.depends_on_id ||
+          tasks.some(
+            (p) => p.id === t.depends_on_id && p.status === "Completed",
+          )) &&
+        actionable(t, day) &&
+        t.effort_minutes &&
+        t.effort_minutes <= minutes,
     )
     .sort(
       (a, b) =>
@@ -181,6 +215,21 @@ export function parseTaskInput(
   defaults: CaptureDefaults = {},
   directory: Directory = { teams: [], people: [] },
 ) {
+  if (defaults.literal)
+    return {
+      title: input.trim(),
+      classification: defaults.classification || "Standard",
+      bucket_id: defaults.bucket_id || null,
+      project_id: defaults.project_id || null,
+      task_type: defaults.task_type || "To Do",
+      team_id: defaults.team_id || null,
+      person_id: defaults.person_id || null,
+      follow_up_date: defaults.follow_up_date || null,
+      due_date: defaults.due_date || null,
+      date_preferences: defaults.date_preferences || {},
+      tags: defaults.tags || [],
+      ...(defaults.content_type ? { content_type: defaults.content_type } : {}),
+    };
   let text = input.trim();
   let bucket_id = defaults.bucket_id || null;
   let classification = defaults.classification || "Standard";
@@ -201,6 +250,53 @@ export function parseTaskInput(
     const prefix =
       text.match(/^(.+?)\s+[-:]\s*(.+)$/) || text.match(/^([^:]+):\s*(.+)$/);
     if (!prefix) break;
+    const entities = [
+      ...teams.map((t) => ({
+        kind: "team",
+        id: t.id,
+        names: [t.name, ...t.aliases],
+      })),
+      ...active.map((b) => ({
+        kind: "bucket",
+        id: b.id,
+        names: [b.name, ...b.aliases],
+      })),
+    ];
+    let remaining = nameKey(prefix[1]);
+    const combined: { kind: string; id: string }[] = [];
+    while (remaining) {
+      const possible = entities
+        .flatMap((e) =>
+          e.names
+            .filter(
+              (n) =>
+                remaining === nameKey(n) ||
+                remaining.startsWith(nameKey(n) + " "),
+            )
+            .map((n) => ({ ...e, length: nameKey(n).length })),
+        )
+        .toSorted((a, b) => b.length - a.length);
+      const longest = possible.filter((p) => p.length === possible[0]?.length);
+      if (new Set(longest.map((p) => p.kind + p.id)).size !== 1) break;
+      const match = longest[0];
+      combined.push(match);
+      remaining = remaining.slice(match.length).trim();
+    }
+    if (
+      !remaining &&
+      combined.length >= 2 &&
+      new Set(combined.map((e) => e.kind)).size === combined.length
+    ) {
+      for (const e of combined) {
+        if (e.kind === "team") team_id = e.id;
+        else {
+          bucket_id = e.id;
+          gotBucket = true;
+        }
+      }
+      text = prefix[2].trim();
+      continue;
+    }
     const key = nameKey(prefix[1]);
     const type = taskTypes.find((t) => nameKey(t) === key.replace(/-/g, " "));
     if (type) {
@@ -285,10 +381,18 @@ export function parseTaskInput(
     .trim();
   if (withoutTags) text = withoutTags;
   else hashtagNames.length = 0;
+  const intent =
+    defaults.content_type && defaults.content_type !== "Task"
+      ? null
+      : captureIntent(text, day, task_type, resolveDate);
   const parsed =
     defaults.content_type && defaults.content_type !== "Task"
       ? { title: text, classification, due_date: null }
-      : parseCapture(text, day);
+      : intent?.kind === "deadline" || intent?.kind === "suggested"
+        ? { title: intent.title, classification, due_date: intent.date }
+        : parseCapture(intent?.title || text, day);
+  if (intent?.kind === "follow_up" && task_type === "To Do")
+    task_type = "Follow Up";
   // parseCapture handles tight class prefixes as well (e.g. Ongoing-task).
   if (parsed.classification !== "Standard")
     classification = parsed.classification;
@@ -305,7 +409,9 @@ export function parseTaskInput(
     );
     if (mentions.length === 1) bucket_id = mentions[0].id;
   }
-  const isChase = task_type === "Follow Up" || task_type === "Delegated";
+  const isChase =
+    intent?.kind !== "deadline" &&
+    (task_type === "Follow Up" || task_type === "Delegated");
   const due_date =
     defaults.content_type && defaults.content_type !== "Task"
       ? null
@@ -313,9 +419,19 @@ export function parseTaskInput(
   const follow_up_date =
     (isChase && parsed.due_date) || defaults.follow_up_date || null;
   const date_preferences = { ...defaults.date_preferences };
+  if (intent?.someday) date_preferences.due_date = "Someday";
   if (parsed.due_date && !isChase) delete date_preferences.due_date;
   return {
     title: parsed.title,
+    ...(intent?.kind === "suggested"
+      ? { suggested_start: intent.start, suggested_end: intent.end }
+      : {}),
+    ...(intent?.recurrence
+      ? {
+          recurrence_rule: intent.recurrence,
+          recurrence_date: intent.recurrenceDate,
+        }
+      : {}),
     ...(defaults.content_type ? { content_type: defaults.content_type } : {}),
     classification,
     bucket_id,
@@ -324,7 +440,7 @@ export function parseTaskInput(
     team_id,
     person_id,
     follow_up_date,
-    due_date,
+    due_date: intent?.recurrenceDate || due_date,
     date_preferences,
     tags: canonicalTags([...(defaults.tags || []), ...hashtagNames], tags),
   };
