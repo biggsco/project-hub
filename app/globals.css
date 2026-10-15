@@ -1210,3 +1210,265 @@ nav button {
     top: 285px;
   }
 }
+
+/* Organisation stays optional and compact beside fast capture. */
+.chip {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 7px 10px;
+  font-size: 11px;
+  min-height: 32px;
+}
+.chip.selected {
+  border-color: #8e86ab;
+  background: var(--soft);
+  color: var(--text);
+}
+.capture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: flex-start;
+  padding: 10px 4px 0;
+}
+.capture-controls .field-label {
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 5px;
+}
+.capture-controls .bucket-picker {
+  flex-basis: 100%;
+}
+.capture-controls .smart-date {
+  margin-top: 0;
+  min-width: 140px;
+}
+.capture-controls select,
+.capture-controls input,
+.capture-controls summary {
+  font-size: 11px;
+  padding: 7px 9px;
+}
+.bucket-chips,
+.tag-chips,
+.inline-create,
+.manage-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bucket-chips select {
+  max-width: 210px;
+}
+.tag-picker {
+  margin-top: 18px;
+}
+.tag-picker.compact {
+  margin-top: 0;
+  flex: 1;
+  min-width: 200px;
+}
+.tag-picker input {
+  width: 150px;
+  min-width: 90px;
+}
+.inline-create {
+  margin-top: 8px;
+}
+.downtime-buckets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+.organisation-manager {
+  margin-bottom: 20px;
+  padding: 14px;
+}
+.organisation-manager summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.organisation-manager p {
+  font-size: 12px;
+}
+.manage-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.manage-row > span {
+  flex: 1;
+  min-width: 140px;
+}
+.manage-row button {
+  padding: 6px;
+  border: 1px solid var(--line);
+}
+.manage-row input,
+.manage-row select {
+  max-width: 200px;
+  font-size: 12px;
+}
+.bucket-edit {
+  max-width: 500px;
+  padding: 12px;
+  background: var(--soft);
+  margin-top: 12px;
+  border-radius: 8px;
+}
+.bucket-edit .primary {
+  margin-top: 12px;
+}
+.bucket-group {
+  margin: 15px 0 25px;
+}
+.bucket-group h3 {
+  margin: 0;
+}
+.bucket-group .section-heading {
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+.bucket-group .section-heading p {
+  margin: 4px 0 0;
+  font-size: 11px;
+}
+.capture-controls .smart-date details[open] {
+  position: absolute;
+  z-index: 10;
+  width: 280px;
+  max-width: calc(100vw - 40px);
+  background: var(--surface);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 5px 25px #0002;
+}
+.natural-date {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.natural-date input {
+  min-width: 0;
+  width: 150px;
+}
+.natural-date button {
+  font-size: 11px;
+}
+.natural-date small {
+  color: var(--muted);
+}
+@media (max-width: 760px) {
+  .capture-controls {
+    gap: 10px;
+  }
+  .bucket-chips {
+    gap: 5px;
+  }
+  .bucket-chips select {
+    width: 145px;
+  }
+  .capture-controls .smart-date details[open] {
+    right: 0;
+  }
+  .manage-row button {
+    min-height: 36px;
+  }
+  .tag-picker.compact {
+    flex-basis: 100%;
+  }
+  .capture-controls .chip {
+    min-height: 36px;
+  }
+  .inline-create input {
+    min-width: 0;
+    max-width: 160px;
+  }
+}
+.chip {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.task-title small {
+  overflow-wrap: anywhere;
+}
+
+.capture-context {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 4px;
+}
+.tag-filter {
+  position: relative;
+  min-width: 140px;
+  font-size: 12px;
+}
+.tag-filter summary {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.tag-filter-options {
+  position: absolute;
+  z-index: 15;
+  top: 100%;
+  left: 0;
+  width: 240px;
+  max-width: calc(100vw - 40px);
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #0002;
+}
+.tag-filter-options label {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.tag-filter-options input {
+  flex-shrink: 0;
+}
+.tag-filter-options small {
+  color: var(--muted);
+}
+.check[aria-busy="true"] {
+  opacity: 0.5;
+}
+@media (max-width: 760px) {
+  .tag-filter {
+    min-width: 0;
+  }
+  .tag-filter-options {
+    width: 200px;
+  }
+}
+@media (max-width: 760px) {
+  .tag-filter-options {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-width: none;
+    max-height: 45vh;
+    z-index: 30;
+  }
+}

@@ -21,19 +21,44 @@ export default function SmartDate({
   someday = false,
   onChange,
   snooze = false,
+  natural = false,
+  disabled = false,
 }: {
   label: string;
   value: string | null;
   someday?: boolean;
   onChange: (date: string | null, someday?: boolean) => void;
   snooze?: boolean;
+  natural?: boolean;
+  disabled?: boolean;
 }) {
   const [custom, setCustom] = useState(false);
+  const [expression, setExpression] = useState("");
+  const recognised = resolveDate(expression);
   return (
-    <div className="smart-date">
+    <div
+      className="smart-date"
+      onKeyDown={(e) => {
+        if (
+          e.key === "Escape" &&
+          e.currentTarget.querySelector("details[open]")
+        ) {
+          e.currentTarget.querySelector("details")?.removeAttribute("open");
+          e.stopPropagation();
+        }
+      }}
+    >
       <span className="field-label">{label}</span>
-      <details>
+      <details
+        onToggle={(e) => {
+          if (disabled) e.currentTarget.removeAttribute("open");
+        }}
+      >
         <summary
+          aria-disabled={disabled}
+          onClick={(e) => {
+            if (disabled) e.preventDefault();
+          }}
           aria-label={`${label}: ${value || (someday ? "Someday" : snooze ? "Not snoozed" : "No deadline")}`}
         >
           {value
@@ -49,6 +74,38 @@ export default function SmartDate({
                 ? "Not snoozed"
                 : "No deadline"}
         </summary>
+        {natural && (
+          <div className="natural-date">
+            <input
+              aria-label={label + " natural language"}
+              value={expression}
+              placeholder="e.g. in 2 weeks"
+              onChange={(e) => setExpression(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (recognised) {
+                    onChange(recognised, false);
+                    e.currentTarget.closest("details")?.removeAttribute("open");
+                  }
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!recognised}
+              onClick={(e) => {
+                onChange(recognised, false);
+                e.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+            >
+              Use {recognised || "date"}
+            </button>
+            {expression && !recognised && (
+              <small>Use a supported phrase or Custom date.</small>
+            )}
+          </div>
+        )}
         <div className="date-presets">
           {(snooze
             ? ["Tomorrow", "Next week", "2 weeks", "1 month", "No deadline"]

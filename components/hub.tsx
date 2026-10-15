@@ -1,4 +1,14 @@
 "use client";
+import BucketPicker from "./bucket-picker";
+import TagFilter from "./tag-filter";
+import TagPicker from "./tag-picker";
+import OrganisationManager from "./organisation-manager";
+import {
+  nameKey,
+  matchesTags,
+  type Bucket,
+  type Tag,
+} from "@/lib/organisation";
 import QuickAdd from "./quick-add";
 import SmartDate from "./smart-date";
 import {
@@ -69,6 +79,13 @@ export default function Hub({
   email: string;
   initialProject?: string;
 }) {
+  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [bucketFilter, setBucketFilter] = useState("");
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [grouped, setGrouped] = useState(true);
+  const pendingTaskIds = useRef(new Set<string>());
+  const [pendingTasks, setPendingTasks] = useState<string[]>([]);
   const drawerRef = useRef<HTMLElement>(null);
   const [effortFilter, setEffortFilter] = useState("");
   const [assignmentFilter, setAssignmentFilter] = useState("");
@@ -155,9 +172,31 @@ export default function Hub({
       const r = await fetch("/api/data");
       const b = await r.json();
       if (!r.ok) throw Error(b.error);
-      setTasks(b.tasks);
+      setTasks((current) =>
+        b.tasks.map((t: Task) =>
+          pendingTaskIds.current.has(t.id)
+            ? current.find((row) => row.id === t.id) || t
+            : t,
+        ),
+      );
       setProjects(b.projects);
       setActivity(b.activity);
+      setBuckets(b.buckets || []);
+      const nextTags: Tag[] = b.tags || [];
+      setTagFilter((current) =>
+        current.flatMap((name) => {
+          const previous = tags.find(
+            (tag) => nameKey(tag.name) === nameKey(name),
+          );
+          const next = nextTags.find((tag) =>
+            previous
+              ? tag.id === previous.id
+              : nameKey(tag.name) === nameKey(name),
+          );
+          return next ? [next.name] : [];
+        }),
+      );
+      setTags(nextTags);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -197,6 +236,79 @@ export default function Hub({
       setBusy(false);
     }
   }
+  async function completeTask(t: Task) {
+    if (pendingTaskIds.current.has(t.id)) return;
+    pendingTaskIds.current.add(t.id);
+    setPendingTasks([...pendingTaskIds.current]);
+    setError("");
+    const optimistic = {
+      ...t,
+      status: (t.status === "Completed"
+        ? "To Do"
+        : "Completed") as Task["status"],
+      completed_at: t.status === "Completed" ? null : new Date().toISOString(),
+    };
+    setTasks((current) =>
+      current.map((row) => (row.id === t.id ? optimistic : row)),
+    );
+    try {
+      const r = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "tasks",
+          id: t.id,
+          action: "save",
+          value: optimistic,
+        }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Unable to update task.");
+      setTasks((current) =>
+        current.map((row) => (row.id === t.id ? b.record : row)),
+      );
+      setActivity((current) =>
+        [
+          {
+            id: crypto.randomUUID(),
+            entity_id: t.id,
+            title: b.record.title,
+            action: "update",
+            created_at: b.record.updated_at,
+          },
+          ...current,
+        ].slice(0, 100),
+      );
+    } catch (e) {
+      setTasks((current) => current.map((row) => (row.id === t.id ? t : row)));
+      setError(
+        (e as Error).message + " The task's previous status has been restored.",
+      );
+    } finally {
+      pendingTaskIds.current.delete(t.id);
+      setPendingTasks([...pendingTaskIds.current]);
+    }
+  }
+  async function manage(input: Record<string, unknown>) {
+    setError("");
+    try {
+      const r = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error);
+      await load();
+      return b.record || true;
+    } catch (e) {
+      setError((e as Error).message);
+      return null;
+    }
+  }
+  async function createBucket(name: string): Promise<Bucket | null> {
+    return await manage({ action: "bucket_save", value: { name } });
+  }
   function go(s: string) {
     history.replaceState(null, "", "/");
     setSection(s);
@@ -207,6 +319,8 @@ export default function Hub({
     setSort(s === "Delegated / Waiting On" ? "followup" : "due");
     setProjectFilter("");
     setSelected([]);
+    setBucketFilter("");
+    setTagFilter([]);
     setEffortFilter("");
     setAssignmentFilter("");
     setClassificationFilter("");
@@ -229,7 +343,7 @@ export default function Hub({
           }
           if (
             section === "Inbox" &&
-            (t.classification !== "Inbox" ||
+            (t.classification !== "Standard" ||
               t.status !== "Inbox" ||
               !!t.assigned_to)
           )
@@ -255,7 +369,11 @@ export default function Hub({
           )
             return false;
           if (effortFilter === "quick" && !actionable(t, day)) return false;
-          if (assignmentFilter === "unassigned" && t.assigned_to) return false;
+          if (
+            assignmentFilter === "unassigned" &&
+            (t.assigned_to || (section === "Downtime" && !actionable(t, day)))
+          )
+            return false;
           if (
             assignmentFilter &&
             assignmentFilter !== "unassigned" &&
@@ -266,6 +384,7 @@ export default function Hub({
             !showSnoozed &&
             !query &&
             !selectedProject &&
+            !bucketFilter &&
             section !== "Completed / Archive" &&
             t.snoozed_until &&
             t.snoozed_until > day
@@ -273,6 +392,14 @@ export default function Hub({
             return false;
           if (selectedProject && t.project_id !== selectedProject) return false;
           if (projectFilter && t.project_id !== projectFilter) return false;
+          if (bucketFilter === "none" && t.bucket_id) return false;
+          if (
+            bucketFilter &&
+            bucketFilter !== "none" &&
+            t.bucket_id !== bucketFilter
+          )
+            return false;
+          if (!matchesTags(t.tags, tagFilter)) return false;
           if (status && t.status !== status) return false;
           if (
             priority === "High+" &&
@@ -301,6 +428,7 @@ export default function Hub({
             t.assignment_notes,
             t.classification,
             t.next_action,
+            buckets.find((b) => b.id === t.bucket_id)?.name || "",
             ...t.tags,
           ]
             .join(" ")
@@ -308,16 +436,26 @@ export default function Hub({
             .includes(query.toLowerCase());
         })
         .sort((a, b) =>
-          sort === "followup"
-            ? (a.follow_up_date || "9999").localeCompare(
-                b.follow_up_date || "9999",
-              )
-            : sort === "title"
-              ? a.title.localeCompare(b.title)
-              : sort === "priority"
-                ? priorities.indexOf(b.priority) -
-                  priorities.indexOf(a.priority)
-                : (a.due_date || "9999").localeCompare(b.due_date || "9999"),
+          sort === "effort"
+            ? (a.effort_minutes ?? 99999) - (b.effort_minutes ?? 99999)
+            : sort === "assignment"
+              ? a.assigned_to.localeCompare(b.assigned_to)
+              : sort === "status"
+                ? statuses.indexOf(a.status) - statuses.indexOf(b.status)
+                : sort === "tags"
+                  ? a.tags.join(", ").localeCompare(b.tags.join(", "))
+                  : sort === "followup"
+                    ? (a.follow_up_date || "9999").localeCompare(
+                        b.follow_up_date || "9999",
+                      )
+                    : sort === "title"
+                      ? a.title.localeCompare(b.title)
+                      : sort === "priority"
+                        ? priorities.indexOf(b.priority) -
+                          priorities.indexOf(a.priority)
+                        : (a.due_date || "9999").localeCompare(
+                            b.due_date || "9999",
+                          ),
         ),
     [
       tasks,
@@ -334,39 +472,43 @@ export default function Hub({
       assignmentFilter,
       classificationFilter,
       showSnoozed,
+      buckets,
+      bucketFilter,
+      tagFilter,
     ],
   );
   function taskRow(t: Task) {
     return (
       <div className="task-row" key={t.id}>
         <button
-          disabled={busy}
+          disabled={busy || pendingTasks.includes(t.id)}
           className={"check " + (t.status === "Completed" ? "checked" : "")}
           aria-label={
             t.status === "Completed"
               ? "Reopen " + t.title
               : "Complete " + t.title
           }
-          onClick={() =>
-            mutate(
-              "tasks",
-              {
-                ...t,
-                status: t.status === "Completed" ? "To Do" : "Completed",
-              },
-              t.id,
-            )
-          }
+          aria-busy={pendingTasks.includes(t.id)}
+          onClick={() => completeTask(t)}
         >
           {t.status === "Completed" && <Check size={13} />}
         </button>
-        <button className="task-title" onClick={() => edit(t)}>
+        <button
+          className="task-title"
+          disabled={pendingTasks.includes(t.id)}
+          onClick={() => edit(t)}
+        >
           <strong>{t.title}</strong>
           <small>
             {projects.find((p) => p.id === t.project_id)?.name || "Personal"}
             {t.parent_id ? " · Subtask" : ""}
             {t.person ? " · " + t.person : ""}
-            {t.classification !== "Inbox" ? " · " + t.classification : ""}
+            {t.bucket_id
+              ? " · " +
+                (buckets.find((b) => b.id === t.bucket_id)?.name || "Bucket")
+              : ""}
+            {t.tags.length ? " · " + t.tags.join(", ") : ""}
+            {t.classification !== "Standard" ? " · " + t.classification : ""}
             {t.assigned_to ? " · Waiting on " + t.assigned_to : ""}
             {t.effort_minutes
               ? " · " + efforts.find(([n]) => n === t.effort_minutes)?.[1]
@@ -381,11 +523,13 @@ export default function Hub({
               : ""}
           </small>
         </button>
-        <span className={"badge p-" + t.priority}>{t.priority}</span>
+        {t.priority !== "None" && (
+          <span className={"badge p-" + t.priority}>{t.priority}</span>
+        )}
         <select
           aria-label={"Status for " + t.title}
           value={t.status}
-          disabled={busy}
+          disabled={busy || pendingTasks.includes(t.id)}
           onChange={(e) =>
             mutate("tasks", { ...t, status: e.target.value }, t.id)
           }
@@ -410,6 +554,7 @@ export default function Hub({
             label={"Deadline for " + t.title}
             value={t.due_date}
             someday={t.date_preferences.due_date === "Someday"}
+            disabled={busy || pendingTasks.includes(t.id)}
             onChange={(due_date, someday) => {
               const date_preferences = { ...t.date_preferences };
               delete date_preferences.due_date;
@@ -485,7 +630,7 @@ export default function Hub({
                       (t) =>
                         !t.archived &&
                         t.status === "Inbox" &&
-                        t.classification === "Inbox" &&
+                        t.classification === "Standard" &&
                         !t.assigned_to,
                     ).length
                   }
@@ -568,7 +713,23 @@ export default function Hub({
         </header>
         <div className="content">
           <QuickAdd
-            onCreated={(records) => {
+            buckets={buckets}
+            tags={tags}
+            onCreateBucket={createBucket}
+            contextSection={section}
+            contextKey={`${section}:${selectedProject || ""}:${bucketFilter}`}
+            contextProject={selectedProject}
+            projectName={project?.name}
+            contextBucket={
+              bucketFilter === "none" ? null : bucketFilter || undefined
+            }
+            onCreated={(records, libraryTags) => {
+              setTags((current) => [
+                ...libraryTags,
+                ...current.filter(
+                  (t) => !libraryTags.some((n) => n.id === t.id),
+                ),
+              ]);
               setTasks((current) => [
                 ...records,
                 ...current.filter((t) => !records.some((r) => r.id === t.id)),
@@ -627,6 +788,16 @@ export default function Hub({
               </button>
             )}
           </div>
+          {section === "Projects" && !selectedProject && (
+            <div className="filters">
+              <TagFilter
+                tags={tags}
+                value={tagFilter}
+                onChange={setTagFilter}
+                label="Filter project tag"
+              />
+            </div>
+          )}
           {error && (
             <div className="error" role="alert">
               {error}
@@ -640,6 +811,12 @@ export default function Hub({
           ) : section === "Settings" ? (
             <div className="panel settings">
               <h2>Workspace settings</h2>
+              <OrganisationManager
+                tasks={tasks}
+                buckets={buckets}
+                tags={tags}
+                manage={manage}
+              />
               <label>
                 Account
                 <input value={email} readOnly />
@@ -723,6 +900,8 @@ export default function Hub({
                             tasks,
                             projects,
                             activity,
+                            buckets,
+                            tags,
                           },
                           null,
                           2,
@@ -1034,8 +1213,16 @@ export default function Hub({
           ) : section === "Projects" && !selectedProject ? (
             <div className="projects-grid">
               {projects
+                .filter((p) => matchesTags(p.tags, tagFilter))
                 .filter((p) =>
-                  [p.name, p.description, p.notes, p.category, p.next_action]
+                  [
+                    p.name,
+                    p.description,
+                    p.notes,
+                    p.category,
+                    p.next_action,
+                    ...p.tags,
+                  ]
                     .join(" ")
                     .toLowerCase()
                     .includes(query.toLowerCase()),
@@ -1047,6 +1234,122 @@ export default function Hub({
             </div>
           ) : (
             <>
+              {section === "Downtime" && (
+                <>
+                  <div
+                    className="downtime-buckets"
+                    aria-label="Downtime buckets"
+                  >
+                    <button
+                      className={"chip " + (!bucketFilter ? "selected" : "")}
+                      onClick={() => setBucketFilter("")}
+                    >
+                      All Downtime (
+                      {
+                        tasks.filter(
+                          (t) =>
+                            t.classification === "Downtime" &&
+                            !t.archived &&
+                            t.status !== "Completed",
+                        ).length
+                      }
+                      )
+                    </button>
+                    {buckets
+                      .filter(
+                        (b) =>
+                          !b.archived ||
+                          tasks.some(
+                            (t) =>
+                              t.bucket_id === b.id &&
+                              t.classification === "Downtime" &&
+                              !t.archived &&
+                              t.status !== "Completed",
+                          ),
+                      )
+                      .toSorted((a, b) => a.position - b.position)
+                      .map((b) => (
+                        <button
+                          className={
+                            "chip " + (bucketFilter === b.id ? "selected" : "")
+                          }
+                          key={b.id}
+                          onClick={() => setBucketFilter(b.id)}
+                          title={b.description}
+                        >
+                          {b.name}
+                          {b.archived ? " (archived)" : ""} (
+                          {
+                            tasks.filter(
+                              (t) =>
+                                t.bucket_id === b.id &&
+                                t.classification === "Downtime" &&
+                                !t.archived &&
+                                t.status !== "Completed",
+                            ).length
+                          }
+                          )
+                        </button>
+                      ))}
+                    <button
+                      className={
+                        "chip " + (bucketFilter === "none" ? "selected" : "")
+                      }
+                      onClick={() => setBucketFilter("none")}
+                    >
+                      Uncategorised (
+                      {
+                        tasks.filter(
+                          (t) =>
+                            !t.bucket_id &&
+                            t.classification === "Downtime" &&
+                            !t.archived &&
+                            t.status !== "Completed",
+                        ).length
+                      }
+                      )
+                    </button>
+                    <button
+                      className={
+                        "chip " +
+                        (assignmentFilter === "unassigned" ? "selected" : "")
+                      }
+                      onClick={() =>
+                        setAssignmentFilter(
+                          assignmentFilter === "unassigned" ? "" : "unassigned",
+                        )
+                      }
+                    >
+                      Available to Delegate
+                    </button>
+                    <button
+                      className={
+                        "chip " + (effortFilter === "quick" ? "selected" : "")
+                      }
+                      onClick={() =>
+                        setEffortFilter(effortFilter === "quick" ? "" : "quick")
+                      }
+                    >
+                      Quick Wins
+                    </button>
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        setGrouped(!grouped);
+                        setView("List");
+                      }}
+                    >
+                      {grouped ? "Flat list" : "Grouped list"}
+                    </button>
+                  </div>
+                  <OrganisationManager
+                    tasks={tasks}
+                    buckets={buckets}
+                    tags={tags}
+                    manage={manage}
+                  />
+                </>
+              )}
               {project && (
                 <div className="panel overview">
                   <span className="badge">{project.status}</span>
@@ -1115,6 +1418,7 @@ export default function Hub({
                         p.notes,
                         p.category,
                         p.next_action,
+                        ...p.tags,
                       ]
                         .join(" ")
                         .toLowerCase()
@@ -1124,6 +1428,26 @@ export default function Hub({
                 </div>
               )}
               <div className="filters">
+                <select
+                  aria-label="Filter bucket"
+                  value={bucketFilter}
+                  onChange={(e) => setBucketFilter(e.target.value)}
+                >
+                  <option value="">All buckets</option>
+                  <option value="none">Uncategorised</option>
+                  {buckets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                      {b.archived ? " (archived)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <TagFilter
+                  tags={tags}
+                  value={tagFilter}
+                  onChange={setTagFilter}
+                  label="Filter tag"
+                />
                 <select
                   aria-label="Filter classification"
                   value={classificationFilter}
@@ -1226,6 +1550,10 @@ export default function Hub({
                   <option value="followup">Follow-up date</option>
                   <option value="title">Title</option>
                   <option value="priority">Priority</option>
+                  <option value="effort">Effort</option>
+                  <option value="assignment">Assignment</option>
+                  <option value="status">Status</option>
+                  <option value="tags">Tags</option>
                 </select>
                 <button
                   className="secondary"
@@ -1292,9 +1620,11 @@ export default function Hub({
                             onClick={() => edit(t)}
                           >
                             <strong>{t.title}</strong>
-                            <span className={"badge p-" + t.priority}>
-                              {t.priority}
-                            </span>
+                            {t.priority !== "None" && (
+                              <span className={"badge p-" + t.priority}>
+                                {t.priority}
+                              </span>
+                            )}
                             <small>
                               {t.due_date
                                 ? formatDate(t.due_date)
@@ -1315,23 +1645,77 @@ export default function Hub({
                       Sorted by {sort === "due" ? "due date" : sort}
                     </span>
                   </div>
-                  {visible.map((t) => (
-                    <div className="select-row" key={t.id}>
-                      <input
-                        type="checkbox"
-                        aria-label={"Select " + t.title}
-                        checked={selected.includes(t.id)}
-                        onChange={(e) =>
-                          setSelected(
-                            e.target.checked
-                              ? [...selected, t.id]
-                              : selected.filter((id) => id !== t.id),
-                          )
-                        }
-                      />
-                      {taskRow(t)}
-                    </div>
-                  ))}
+                  {section === "Downtime" && grouped
+                    ? [
+                        ...buckets
+                          .toSorted((a, b) => a.position - b.position)
+                          .map((b) => ({
+                            id: b.id,
+                            name: b.name + (b.archived ? " (archived)" : ""),
+                            description: b.description,
+                            archived: b.archived,
+                          })),
+                        {
+                          id: null,
+                          name: "Uncategorised",
+                          description: "",
+                          archived: false,
+                        },
+                      ].map((bucket) => {
+                        const rows = visible.filter(
+                          (t) => t.bucket_id === bucket.id,
+                        );
+                        if (!rows.length) return null;
+                        return (
+                          <section
+                            className="bucket-group"
+                            key={bucket.id || "none"}
+                          >
+                            <div className="section-heading">
+                              <div>
+                                <h3>
+                                  {bucket.name} <small>{rows.length}</small>
+                                </h3>
+                                {bucket.description && (
+                                  <p className="muted">{bucket.description}</p>
+                                )}
+                              </div>
+                              <button
+                                className="text-button"
+                                disabled={bucket.archived}
+                                onClick={() => {
+                                  setBucketFilter(bucket.id || "none");
+                                  document
+                                    .querySelector<HTMLInputElement>(
+                                      '[aria-label="Quick Add task"]',
+                                    )
+                                    ?.focus();
+                                }}
+                              >
+                                Add here
+                              </button>
+                            </div>
+                            {rows.map(taskRow)}
+                          </section>
+                        );
+                      })
+                    : visible.map((t) => (
+                        <div className="select-row" key={t.id}>
+                          <input
+                            type="checkbox"
+                            aria-label={"Select " + t.title}
+                            checked={selected.includes(t.id)}
+                            onChange={(e) =>
+                              setSelected(
+                                e.target.checked
+                                  ? [...selected, t.id]
+                                  : selected.filter((id) => id !== t.id),
+                              )
+                            }
+                          />
+                          {taskRow(t)}
+                        </div>
+                      ))}
                   {!visible.length && (
                     <Empty text="No tasks match this view." />
                   )}
@@ -1430,6 +1814,17 @@ export default function Hub({
                       ))}
                     </select>
                   </label>
+                  <BucketPicker
+                    buckets={buckets}
+                    value={editor.value.bucket_id}
+                    onChange={(bucket_id) =>
+                      setEditor({
+                        ...editor,
+                        value: { ...editor.value, bucket_id },
+                      })
+                    }
+                    onCreate={createBucket}
+                  />
                   <label>
                     Parent task
                     <select
@@ -1608,24 +2003,13 @@ export default function Hub({
                     editor={editor}
                     set={setEditor}
                   />
-                  <label>
-                    Tags (comma separated)
-                    <input
-                      defaultValue={editor.value.tags.join(", ")}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          value: {
-                            ...editor.value,
-                            tags: e.target.value
-                              .split(",")
-                              .map((s) => s.trim())
-                              .filter(Boolean),
-                          },
-                        })
-                      }
-                    />
-                  </label>
+                  <TagPicker
+                    value={editor.value.tags}
+                    tags={tags}
+                    onChange={(tags) =>
+                      setEditor({ ...editor, value: { ...editor.value, tags } })
+                    }
+                  />
                   <Field
                     name="Notes"
                     field="notes"
@@ -1705,6 +2089,13 @@ export default function Hub({
                     field="next_action"
                     editor={editor}
                     set={setEditor}
+                  />
+                  <TagPicker
+                    value={editor.value.tags}
+                    tags={tags}
+                    onChange={(tags) =>
+                      setEditor({ ...editor, value: { ...editor.value, tags } })
+                    }
                   />
                   <Field
                     name="Category"
@@ -1868,6 +2259,7 @@ function Field({
   if (type === "date")
     return (
       <SmartDate
+        natural
         label={name}
         value={editor.value[field]}
         someday={editor.value.date_preferences?.[field] === "Someday"}

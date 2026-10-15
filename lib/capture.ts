@@ -1,6 +1,14 @@
-import { addDays, today, taskSchema, type Task, priorities } from "./model";
+import { canonicalTags, nameKey, type Bucket, type Tag } from "./organisation";
+import {
+  addDays,
+  today,
+  taskSchema,
+  type Task,
+  priorities,
+  type CaptureDefaults,
+} from "./model";
 
-export const classifications = ["Inbox", "Downtime", "Ongoing"] as const;
+export const classifications = ["Standard", "Downtime", "Ongoing"] as const;
 export const efforts = [
   [15, "15 minutes"],
   [30, "30 minutes"],
@@ -78,7 +86,7 @@ export function resolveDate(expression: string, day = today()): string | null {
 export function parseCapture(input: string, day = today()) {
   const original = input.trim();
   let title = original;
-  let classification: (typeof classifications)[number] = "Inbox";
+  let classification: (typeof classifications)[number] = "Standard";
   const prefix = title.match(/^(downtime|ongoing)\s*[-:]\s*(.+)$/i);
   if (prefix) {
     classification =
@@ -155,5 +163,139 @@ export function assignmentChange(
       : null,
     follow_up_date: assigned_to ? previous.follow_up_date : null,
     assignment_notes: assigned_to ? previous.assignment_notes : "",
+  };
+}
+
+/** Explicit metadata prefixes may be removed; incidental bucket words always remain. */
+export function parseTaskInput(
+  input: string,
+  buckets: Bucket[] = [],
+  tags: Tag[] = [],
+  day = today(),
+  defaults: CaptureDefaults = {},
+) {
+  let text = input.trim();
+  let bucket_id = defaults.bucket_id || null;
+  let classification = defaults.classification || "Standard";
+  const active = buckets.filter((b) => !b.archived);
+  const matches = (name: string) =>
+    active.filter((b) =>
+      [b.name, ...b.aliases].some((a) => nameKey(a) === nameKey(name)),
+    );
+  // Up to one classification and one bucket prefix, in either order.
+  let gotClass = false,
+    gotBucket = false;
+  for (let i = 0; i < 2; i++) {
+    const prefix =
+      text.match(/^(.+?)\s+[-:]\s*(.+)$/) || text.match(/^([^:]+):\s*(.+)$/);
+    if (!prefix) break;
+    const key = nameKey(prefix[1]);
+    if (
+      !gotClass &&
+      ["standard", "downtime", "ongoing", "inbox"].includes(key)
+    ) {
+      classification =
+        key === "downtime"
+          ? "Downtime"
+          : key === "ongoing"
+            ? "Ongoing"
+            : "Standard";
+      gotClass = true;
+      text = prefix[2].trim();
+      continue;
+    }
+    const found = matches(prefix[1]);
+    if (!gotBucket && found.length === 1) {
+      bucket_id = found[0].id;
+      gotBucket = true;
+      text = prefix[2].trim();
+      continue;
+    }
+    break;
+  }
+  const hashtagNames: string[] = [];
+  const withoutTags = text
+    .replace(
+      /(^|\s)#([\p{L}\p{N}_][\p{L}\p{N}_-]{0,59})(?=\s|$)/gu,
+      (whole, space, tag) => {
+        const known = tags.find(
+          (t) =>
+            nameKey(t.name).replace(/[ _-]+/g, "-") ===
+            nameKey(tag).replace(/[ _-]+/g, "-"),
+        );
+        hashtagNames.push(known?.name || tag);
+        return space;
+      },
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+  if (withoutTags) text = withoutTags;
+  else hashtagNames.length = 0;
+  const parsed = parseCapture(text, day);
+  // parseCapture handles tight class prefixes as well (e.g. Ongoing-task).
+  if (parsed.classification !== "Standard")
+    classification = parsed.classification;
+  if (!gotBucket) {
+    const mentions = active.filter((b) =>
+      [b.name, ...b.aliases].some((alias) => {
+        if (alias.length < 3) return false;
+        const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(
+          "(^|[^\\p{L}\\p{N}])" + escaped + "(?=$|[^\\p{L}\\p{N}])",
+          "iu",
+        ).test(parsed.title);
+      }),
+    );
+    if (mentions.length === 1) bucket_id = mentions[0].id;
+  }
+  const due_date = parsed.due_date || defaults.due_date || null;
+  const date_preferences = { ...defaults.date_preferences };
+  if (parsed.due_date) delete date_preferences.due_date;
+  return {
+    title: parsed.title,
+    classification,
+    bucket_id,
+    project_id: defaults.project_id || null,
+    due_date,
+    date_preferences,
+    tags: canonicalTags([...(defaults.tags || []), ...hashtagNames], tags),
+  };
+}
+export function boundedPreview(
+  text: string,
+  buckets: Bucket[],
+  tags: Tag[],
+  day = today(),
+  defaults: CaptureDefaults = {},
+) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return {
+    count: lines.length,
+    items: lines
+      .slice(0, 200)
+      .map((line) => parseTaskInput(line, buckets, tags, day, defaults)),
+  };
+}
+
+export function captureContextDefaults(
+  section: string,
+  bucket_id: string | null = null,
+  project_id: string | null = null,
+): CaptureDefaults {
+  return {
+    bucket_id,
+    project_id,
+    classification:
+      section === "Downtime"
+        ? "Downtime"
+        : section === "Ongoing"
+          ? "Ongoing"
+          : "Standard",
+    due_date: null,
+    tags: [],
+    date_preferences: {},
   };
 }

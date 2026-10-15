@@ -21,7 +21,7 @@ const make = (values: Record<string, unknown> = {}): Task => ({
 test("title-only capture and independent classifications", () => {
   assert.deepEqual(parseCapture("Review kitchen documents", day), {
     title: "Review kitchen documents",
-    classification: "Inbox",
+    classification: "Standard",
     due_date: null,
   });
   for (const classification of ["Downtime", "Ongoing"]) {
