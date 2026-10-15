@@ -17,7 +17,7 @@ export default function ConversationHistory({
 }) {
   const h = conversationHistory(tasks, directory, teamId, personId);
   return (
-    <details className="panel conversation-history" open>
+    <details className="panel conversation-history">
       <summary>Last Time We Spoke</summary>
       <p className="muted">
         Only entries explicitly marked “Actually discussed” are recorded as

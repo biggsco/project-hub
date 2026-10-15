@@ -58,7 +58,15 @@ export function promptContext(
   add("assignment", "Assigned to", task.assigned_to);
   add("notes", "Existing notes", task.notes);
   add("next", "Next action", task.next_action);
-  add("deadline", "Due date", task.due_date || undefined);
+  add("deadline", "Firm deadline", task.due_date || undefined);
+  add("followup", "Follow-up date", task.follow_up_date || undefined);
+  add(
+    "flexible",
+    "Flexible work window",
+    [task.suggested_start, task.suggested_end, task.planned_for]
+      .filter(Boolean)
+      .join(" – "),
+  );
   for (const n of task.progress_entries || [])
     add("progress:" + n.id, `${n.kind} — ${n.created_at}`, n.text);
   for (const s of subtasks)
@@ -133,7 +141,9 @@ export function parseSteps(source: string): string[] {
     );
   if (titles.length > 100) throw Error("Import up to 100 steps at a time.");
   const clean = titles.map((s) => z.string().trim().min(1).max(255).parse(s));
-  return clean.filter((s,i)=>clean.findIndex(t=>stepKey(t)===stepKey(s))===i);
+  return clean.filter(
+    (s, i) => clean.findIndex((t) => stepKey(t) === stepKey(s)) === i,
+  );
 }
 export const stepKey = (s: string) =>
   s.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-AU");

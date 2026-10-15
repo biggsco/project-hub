@@ -146,9 +146,9 @@ test("follow-up dates remain distinct from actual deadlines", () => {
     directory,
   );
   assert.equal(
-    titleOnly.due_date,
+    titleOnly.follow_up_date,
     "2026-10-23",
-    "ordinary date capture remains compatible",
+    "follow-up wording creates a chase date",
   );
 });
 test("group meeting lists include direct team tasks and member tasks once", () => {

@@ -1,0 +1,29 @@
+name: Project Hub scheduled jobs
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: project-hub-scheduled-jobs
+  cancel-in-progress: false
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HUB_URL: ${{ vars.PROJECT_HUB_URL }}
+      JOB_SECRET: ${{ secrets.PROJECT_HUB_JOB_SECRET }}
+    steps:
+      - name: Run durable Project Hub jobs
+        shell: bash
+        run: |
+          if [ -z "$HUB_URL" ] || [ -z "$JOB_SECRET" ]; then
+            echo "Jobs are not configured. Set PROJECT_HUB_URL and PROJECT_HUB_JOB_SECRET."
+            exit 0
+          fi
+          case "$HUB_URL" in https://*) ;; *) echo "PROJECT_HUB_URL must use HTTPS"; exit 1;; esac
+          curl --silent --show-error --fail --max-time 240 --request POST \
+            --header "Authorization: Bearer $JOB_SECRET" \
+            --header "Content-Type: application/json" \
+            --data '{}' "${HUB_URL%/}/api/jobs"

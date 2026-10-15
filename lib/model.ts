@@ -1,3 +1,4 @@
+import { recurrenceSchema } from "./recurrence";
 import { progressSchema, referenceSchema } from "./workbench";
 import { taskTypes } from "./people";
 import { z } from "zod";
@@ -81,6 +82,15 @@ export const taskSchema = z.object({
     .nullable()
     .default(null),
   snoozed_until: date.default(null),
+  suggested_start: date.default(null),
+  suggested_end: date.default(null),
+  planned_for: date.default(null),
+  depends_on_id: id.default(null),
+  recurrence_rule: recurrenceSchema.nullable().default(null),
+  recurrence_series_id: id.default(null),
+  recurrence_date: date.default(null),
+  reminder_enabled: z.boolean().default(false),
+  reminder_on: date.default(null),
   next_action: z.string().max(2000).default(""),
   is_milestone: z.boolean().default(false),
   date_preferences: datePreferences,
@@ -165,6 +175,7 @@ export function progress(tasks: Task[], id: string) {
 }
 
 export const captureDefaultsSchema = z.object({
+  literal: z.boolean().optional(),
   content_type: z.enum(["Task", "Idea", "Note"]).optional(),
   bucket_id: id.optional(),
   team_id: id.optional(),

@@ -1,3 +1,4 @@
+import { advanceRecurring, recurrenceAction } from "@/lib/recurrence-records";
 import { workbenchAction } from "@/lib/workbench-records";
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
@@ -22,9 +23,15 @@ export async function GET(req: NextRequest) {
         })),
         { headers: { "Cache-Control": "no-store" } },
       );
-    return NextResponse.json(await asUser(user.id, loadRecords), {
-      headers: { "Cache-Control": "no-store" },
-    });
+    return NextResponse.json(
+      await asUser(user.id, async (c) => {
+        await advanceRecurring(c, user.id);
+        return loadRecords(c);
+      }),
+      {
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch {
     return NextResponse.json(
       {
@@ -59,6 +66,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         await asUser(user.id, (c) => workbenchAction(c, user.id, b)),
       );
+    if (b.action === "recurrence")
+      return NextResponse.json({
+        record: await asUser(user.id, (c) => recurrenceAction(c, user.id, b)),
+      });
     if (b.action === "visit")
       return NextResponse.json(
         await asUser(user.id, (c) => recordVisit(c, user.id)),

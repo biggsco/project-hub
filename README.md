@@ -4,13 +4,56 @@ A private personal project manager running entirely on Render: Next.js, React, T
 
 ## Status
 
-The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` `004_core_simplicity.sql` `005_people_productivity.sql` and `006_workbench.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
+The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` `004_core_simplicity.sql` `005_people_productivity.sql`, `006_workbench.sql` and `007_simplify_automation.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
 
 Implemented: universal title-only Quick Add (Enter to save; Q to focus; Ctrl/Command+K for commands), deterministic date/classification preview, date presets with optional custom calendar, Standard/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
 
 Authentication and Render configuration are retained: private owner account, Better Auth sessions, disabled public registration, origin checks and PostgreSQL row-level security. This change has not been deployed or verified against the live Render service.
 
-Remaining outside this upgrade: recurrence, reminders/email delivery, general CSV import/export, complete backup/restore and full offline workspace access. Settings export includes tasks, projects, buckets, tags and the latest 100 activity entries; it is not a complete database backup.
+Remaining outside this upgrade: email delivery, general CSV import/export, complete backup/restore and full offline workspace access. Settings export includes tasks, projects, buckets, tags and the latest 100 activity entries; it is not a complete database backup.
+
+## Current experience — coordinated simplification upgrade
+
+Primary navigation is now **Home, Inbox, People, Work**. Home has only Quick Capture, up to four attention items, recent work and compact people shortcuts. Work uses a single contextual selector for existing projects, buckets, Downtime/Ongoing, ideas, calendar, planning and review tools. Settings remains a secondary action. No previous records or tools were removed.
+
+Quick Capture is one title field + Enter. Optional selectors are under Options. A short live preview shows recognised metadata, not a list of empty fields. Use original text discards the automatic interpretation before saving. Bucket/team selections and failed-submission retry IDs retain the existing behaviour. Inbox defaults to all Inbox-status captures regardless of classification or assignment, with an Unorganised scope in its collapsed filters.
+
+Task details open with description, Next Action, checklist, progress and Develop with ChatGPT. Plan This Task is an option in its existing prompt-mode selector. References and history are expandable; metadata, recurrence, assignment, dates, dependencies and optional reminders are under More Details. List rows show the task title and completion action; advanced filters, status/date editing and full metadata remain in filters/task details.
+
+### Smart capture and flexible planning
+
+- Team/bucket records remain the source of truth for aliases. Migration 007 adds TP to existing Technology Planning teams without replacing custom aliases. GM, Systems, VWX, Momentus and MyAVM use the existing names/aliases. Compound prefixes such as `Systems VWX - Discuss coordinate automation` can select both a team and bucket. Unknown/ambiguous prefixes remain in the title.
+- `TP - Finalise goals by 30 October` sets a firm deadline; named day/month dates without a year use the next such date and show it in the preview. Invalid dates remain unchanged. Existing deadlines are never automatically converted or moved.
+- Explicit chase/follow-up wording such as `Systems - Chase AP locations in 2 weeks` puts the date in Follow-up. `Follow up with IT next Friday` now creates a follow-up date rather than a deadline. An explicit `by` date takes precedence as a deadline. Existing saved records are not reinterpreted.
+- `VWX - Work on tags sometime next week` creates a flexible Monday–Friday window. `Eventually` captures Someday without a deadline. These do not create overdue warnings.
+- Suggested Plan is available in Work. It reuses the deterministic ranking engine, excludes unmet explicit dependencies, and shows at most three choices for today plus five for the coming week. Accept/skip/move/complete operate on separate flexible dates; no calendar availability is assumed. Firm deadlines remain unchanged.
+
+### Recurring commitments
+
+Type `every Monday`, `every fortnight`, `first Friday of each month` or `every 3 months` while capturing. More Details offers Daily, Weekdays, Weekly, Fortnightly, Monthly, Quarterly, a monthly weekday and custom day/week/month intervals. Choose fixed schedule or after completion.
+
+A reusable definition stores the template; each occurrence is a separate task with its own status, deadline, notes, progress and activity. Fixed schedules coalesce missed dates to the latest due occurrence and cap open occurrences at two. After-completion schedules wait for completion and generate one next instance. Calendar math uses Adelaide dates rather than UTC-duration arithmetic, preserving month-end anchors and DST dates. Pause/resume/stop live under More Details. Deleting an occurrence does not regenerate it because a receipt is retained. Future instances do not inherit private occurrence notes or progress.
+
+### Teams notifications and scheduling
+
+Open Settings → Teams notifications & scheduled jobs. Notifications are disabled until a signed Workflow URL is saved and tenant/destination checks are confirmed. The server encrypts the URL using the existing BETTER_AUTH_SECRET; neither URL nor ciphertext is returned to the browser, task exports or delivery logs. Rotating that secret requires re-entering the webhook. Only Microsoft signed HTTPS Workflow endpoints are allowed and redirects are refused.
+
+Daily digests, optional Monday summaries and opt-in High/Critical task reminders use Adaptive Cards with at most eight relevant titles/links. Privacy mode is on by default; disabling it adds short Next Actions only. Notes, descriptions and progress are never sent. Flexible planning dates alone do not trigger reminders. Task links open the authenticated task workbench.
+
+The durable queue uses unique notification keys, transactional claims, attempt/delivery timestamps and safe error codes. HTTP 429 rejections retry at most three times; timeouts, interrupted workers and ambiguous server errors are marked unconfirmed rather than risking duplicate delivery. A webhook success means acceptance, not confirmed completion of the downstream Teams posting action. Exactly-once delivery is not promised.
+
+No new Render service is provisioned. The repository's scheduled GitHub Action calls `/api/jobs` roughly every 15 minutes. Configuration needed **only for unattended automation**:
+
+- Existing Render web service environment: `HUB_JOB_SECRET`, random and at least 32 characters.
+- GitHub Actions repository secret: `PROJECT_HUB_JOB_SECRET`, same value.
+- GitHub Actions repository variable: `PROJECT_HUB_URL`, the existing HTTPS app URL.
+- In-app notification settings: your signed Teams Workflow URL, tenant/destination confirmation, enabled switches and Adelaide send time.
+
+The endpoint uses constant-time bearer validation. Scheduling/recurrence/delivery state is persisted in PostgreSQL and safe across concurrent calls/restarts. GitHub schedules are best-effort and may be delayed/dropped or disabled after public-repository inactivity; monitor Actions. A dedicated timing-guaranteed scheduler would require separate approval. The authenticated workspace also safely catches up recurring instances when opened; notifications still use server-side jobs.
+
+See the [Teams and scheduler setup guide](public/teams-setup.html), also served at `/teams-setup.html`, for the exact Teams trigger, personal Flow bot chat action/card expression, tenant checks, secret setup, test steps and troubleshooting. No premium HTTP trigger, OAuth app, AI API or new paid service is introduced. Tenant availability, policy, licensing and real chat delivery must be verified manually; the implementation does not assume them from template visibility.
+
+Migration `007_simplify_automation.sql` is additive: flexible/dependency/reminder task fields, recurrence definitions/receipts, encrypted notification settings, durable delivery queue and job timestamps. Migrations 001–006 are unchanged. The existing Render pre-deploy command applies it; no production migration execution is claimed without live deployment access.
 
 ## Capture and dates
 
@@ -51,7 +94,7 @@ No new dependency or environment-variable changes are required. Migrations 001�
 - Known team aliases and exact known person wording can be recognised conservatively. Explicit `Follow Up -` or `Delegated -` relative dates become follow-up dates; ordinary `Follow up with IT next Friday` retains its existing deadline behaviour. Due dates remain independent. Quick Add previews recognised metadata.
 - What's Next uses deterministic priority, deadline, due-follow-up, next-action and recency rules. It excludes blocked, completed, archived, snoozed and future-starting work. Delegated tasks are suggested only as due follow-ups, never as work for you to perform. Time estimates are required when filtering to available time. Skip is remembered for the browser-tab session.
 - After seven days away, Welcome back appears with a bounded attention list, recent work and active projects. Hide from focus for a week removes an item from dashboard suggestions without deleting it or changing its deadline. Existing search/project access and snooze remain available.
-- Seven primary destinations keep navigation compact: Dashboard, Inbox, My Tasks, Projects, Downtime, People & Teams and Calendar. Ongoing, Waiting On, Completed/Archive and Settings remain under More views.
+- The current four primary destinations are Home, Inbox, People and Work. Existing secondary views remain available from the Work selector and commands.
 - Existing effort, Quick Wins, available-time suggestions, Brain Dump, snooze and next actions are reused. No AI, new runtime dependencies or environment variables are added.
 
 Migration 005 adds owner-isolated teams, people and memberships, task links/types, dashboard focus dates and last-opened tracking. Existing assignments are backfilled into people; existing Waiting items become Follow Up. Titles, workflow status, classification, deadlines and existing records are retained. The existing Render pre-deploy migration command applies this change after merge.
@@ -72,7 +115,7 @@ The existing task drawer now opens with Resume Work: last timestamped progress e
 - Last Time We Spoke is integrated into selected people/team views and uses explicit discussion entries, recorded completions, follow-ups, decision flags and unresolved discussion tasks. It does not invent summaries or historical meetings.
 - Weekly Reset is on demand: up to 12 deduplicated overdue/near-due/stale/follow-up/Inbox items plus three active projects. Keep priority, reschedule, snooze, complete, move to Downtime or mark reviewed. It does not automatically change dates or require Inbox Zero.
 - Achievements uses actual task completion dates and the most recent 500 project completion events. Filter by Adelaide date, project, bucket, team or task type; select items, copy plain/Markdown, export formula-safe CSV or prepare an editable ChatGPT summary prompt. Notes/progress are excluded. Reopened tasks are not counted as currently completed; project events are labelled recorded status changes, without invented outcomes. Rendering is paginated at 50 task rows.
-- Dashboard refinements reuse the existing recommendation engine: conversation shortcuts, Radar, recent Next Actions, Quick Wins/Downtime and a Deep Work time mode. Secondary functions remain under More views; seven primary navigation items are retained.
+- Dashboard refinements reuse the existing recommendation engine: conversation shortcuts, Radar, recent Next Actions, Quick Wins/Downtime and a Deep Work time mode. Secondary functions remain available from Work and commands; the current four-item navigation is described above.
 
 Migration `006_workbench.sql` adds defaulted JSONB progress/reference arrays, subtask order, content type and decision flag to tasks, plus an owner-isolated step-import receipt table. Existing records default to Task and retain notes/status/dates/links. Migration 005 remains unchanged. Dedicated owner-locked actions append progress and modify references; stale task forms cannot overwrite these fields. No required environment variables or runtime dependencies are added. The existing Render pre-deploy command applies all unapplied numbered migrations.
 
