@@ -37,3 +37,8 @@ export function orderedBuckets(buckets: Bucket[], recent: string[] = []) {
       );
     });
 }
+
+export function matchesTags(tags: string[], selected: string[]) {
+  const keys = new Set(tags.map(nameKey));
+  return selected.every((tag) => keys.has(nameKey(tag)));
+}

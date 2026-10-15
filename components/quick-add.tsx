@@ -1,6 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { parseTaskInput, boundedPreview } from "@/lib/capture";
+import {
+  parseTaskInput,
+  boundedPreview,
+  captureContextDefaults,
+} from "@/lib/capture";
 import { today, type Task, type CaptureDefaults } from "@/lib/model";
 import { type Bucket, type Tag } from "@/lib/organisation";
 import BucketPicker from "./bucket-picker";
@@ -17,13 +21,19 @@ export default function QuickAdd({
   tags,
   onCreateBucket,
   contextBucket,
-  downtime = false,
+  contextSection = "Dashboard",
+  contextKey,
+  contextProject = null,
+  projectName,
 }: {
   buckets: Bucket[];
   tags: Tag[];
   onCreateBucket: (name: string) => Promise<Bucket | null>;
   contextBucket?: string | null;
-  downtime?: boolean;
+  contextSection?: string;
+  contextKey: string;
+  contextProject?: string | null;
+  projectName?: string;
   onCreated: (records: Task[], tags: Tag[]) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -38,15 +48,17 @@ export default function QuickAdd({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [bucketId, setBucketId] = useState<string | null>(null);
-  const [classification, setClassification] = useState("");
+  const [classification, setClassification] =
+    useState<Task["classification"]>("Standard");
+  const [projectId, setProjectId] = useState<string | null>(contextProject);
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [someday, setSomeday] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
   const defaults: CaptureDefaults = {
     bucket_id: bucketId,
-    classification: (classification ||
-      (downtime ? "Downtime" : "Inbox")) as Task["classification"],
+    classification,
+    project_id: projectId,
     due_date: dueDate,
     tags: selectedTags,
     date_preferences: someday ? { due_date: "Someday" } : {},
@@ -68,20 +80,35 @@ export default function QuickAdd({
       );
     } catch {}
   }, []);
+  function applyDefaults(values: CaptureDefaults) {
+    setBucketId(values.bucket_id || null);
+    setProjectId(values.project_id || null);
+    setClassification(values.classification || "Standard");
+    setDueDate(null);
+    setSomeday(false);
+    setSelectedTags([]);
+    setReceipt(null);
+  }
   useEffect(() => {
-    if (contextBucket !== undefined) setBucketId(contextBucket);
-  }, [contextBucket]);
+    applyDefaults(
+      captureContextDefaults(
+        contextSection,
+        contextBucket || null,
+        contextProject,
+      ),
+    );
+  }, [contextKey, contextSection, contextBucket, contextProject]);
   useEffect(() => {
     if (bucketId && buckets.find((b) => b.id === bucketId)?.archived)
       setBucketId(null);
   }, [buckets, bucketId]);
   useEffect(() => {
     setReceipt(null);
-  }, [bucketId, classification, dueDate, someday, selectedTags, downtime]);
+  }, [bucketId, classification, dueDate, someday, selectedTags, projectId]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       const editing = (e.target as HTMLElement).matches(
-        "input,textarea,select,[contenteditable=true]",
+        "input,textarea,select,button,a,summary,[role=combobox],[contenteditable=true]",
       );
       if (
         ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") ||
@@ -138,7 +165,16 @@ export default function QuickAdd({
     }
   }
   return (
-    <section className="quick-add" aria-label="Quick Add">
+    <section
+      className="quick-add"
+      aria-label="Quick Add"
+      onKeyDown={(e) => {
+        if (e.key === "Escape")
+          e.currentTarget
+            .querySelectorAll("details[open]")
+            .forEach((d) => d.removeAttribute("open"));
+      }}
+    >
       <form
         className="capture"
         onSubmit={async (e) => {
@@ -183,16 +219,15 @@ export default function QuickAdd({
           recent={recent}
         />
         <div className="compact">
-          <span className="field-label">Classification</span>
+          <span className="field-label">Work style</span>
           <select
             aria-label="Quick Add classification"
             value={classification}
-            onChange={(e) => setClassification(e.target.value)}
+            onChange={(e) =>
+              setClassification(e.target.value as Task["classification"])
+            }
           >
-            <option value="">
-              {downtime ? "Downtime (this view)" : "Inbox (default)"}
-            </option>
-            {["Inbox", "Downtime", "Ongoing"].map((c) => (
+            {["Standard", "Downtime", "Ongoing"].map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>
@@ -214,10 +249,27 @@ export default function QuickAdd({
           onChange={setSelectedTags}
         />
       </div>
+      <div className="capture-context">
+        {projectId && (
+          <span className="chip">
+            Project: {projectName || "Selected project"}
+          </span>
+        )}
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => {
+            applyDefaults(captureContextDefaults("Inbox"));
+            input.current?.focus();
+          }}
+        >
+          Reset to Inbox
+        </button>
+      </div>
       <div className="capture-hint">
         <span>
           {text.trim()
-            ? `${parsed.classification}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
+            ? `${parsed.classification}${parsed.project_id ? " · " + (projectName || "Project") : ""}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
             : "Capture first, organise later. Focus with Ctrl / ⌘ K or Q."}
         </span>
         <button

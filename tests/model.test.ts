@@ -21,6 +21,8 @@ test("quick capture needs only a title", () => {
   assert.equal(t.title, "Follow up");
   assert.equal(t.status, "Inbox");
   assert.equal(t.due_date, null);
+  assert.equal(t.priority, "None");
+  assert.equal(t.classification, "Standard");
 });
 test("rejects invalid status, dates, IDs and empty titles", () => {
   for (const v of [

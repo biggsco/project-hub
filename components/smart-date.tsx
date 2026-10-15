@@ -22,6 +22,7 @@ export default function SmartDate({
   onChange,
   snooze = false,
   natural = false,
+  disabled = false,
 }: {
   label: string;
   value: string | null;
@@ -29,15 +30,35 @@ export default function SmartDate({
   onChange: (date: string | null, someday?: boolean) => void;
   snooze?: boolean;
   natural?: boolean;
+  disabled?: boolean;
 }) {
   const [custom, setCustom] = useState(false);
   const [expression, setExpression] = useState("");
   const recognised = resolveDate(expression);
   return (
-    <div className="smart-date">
+    <div
+      className="smart-date"
+      onKeyDown={(e) => {
+        if (
+          e.key === "Escape" &&
+          e.currentTarget.querySelector("details[open]")
+        ) {
+          e.currentTarget.querySelector("details")?.removeAttribute("open");
+          e.stopPropagation();
+        }
+      }}
+    >
       <span className="field-label">{label}</span>
-      <details>
+      <details
+        onToggle={(e) => {
+          if (disabled) e.currentTarget.removeAttribute("open");
+        }}
+      >
         <summary
+          aria-disabled={disabled}
+          onClick={(e) => {
+            if (disabled) e.preventDefault();
+          }}
           aria-label={`${label}: ${value || (someday ? "Someday" : snooze ? "Not snoozed" : "No deadline")}`}
         >
           {value

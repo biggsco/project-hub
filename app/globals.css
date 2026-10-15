@@ -1400,3 +1400,75 @@ nav button {
 .task-title small {
   overflow-wrap: anywhere;
 }
+
+.capture-context {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 4px;
+}
+.tag-filter {
+  position: relative;
+  min-width: 140px;
+  font-size: 12px;
+}
+.tag-filter summary {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.tag-filter-options {
+  position: absolute;
+  z-index: 15;
+  top: 100%;
+  left: 0;
+  width: 240px;
+  max-width: calc(100vw - 40px);
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #0002;
+}
+.tag-filter-options label {
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+}
+.tag-filter-options input {
+  flex-shrink: 0;
+}
+.tag-filter-options small {
+  color: var(--muted);
+}
+.check[aria-busy="true"] {
+  opacity: 0.5;
+}
+@media (max-width: 760px) {
+  .tag-filter {
+    min-width: 0;
+  }
+  .tag-filter-options {
+    width: 200px;
+  }
+}
+@media (max-width: 760px) {
+  .tag-filter-options {
+    position: fixed;
+    top: auto;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    width: auto;
+    max-width: none;
+    max-height: 45vh;
+    z-index: 30;
+  }
+}

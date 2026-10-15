@@ -21,7 +21,15 @@ export default function BucketPicker({
     [busy, setBusy] = useState(false);
   const choices = orderedBuckets(buckets, recent);
   return (
-    <div className={"bucket-picker " + (compact ? "compact" : "")}>
+    <div
+      className={"bucket-picker " + (compact ? "compact" : "")}
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && adding) {
+          setAdding(false);
+          e.stopPropagation();
+        }
+      }}
+    >
       <span className="field-label">Bucket</span>
       <div className="bucket-chips">
         {compact &&

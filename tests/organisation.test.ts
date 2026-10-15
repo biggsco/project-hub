@@ -42,8 +42,9 @@ const parse = (s: string) => parseTaskInput(s, buckets, tags, "2026-10-15");
 test("known bucket prefixes and aliases preserve independent classification", () => {
   assert.deepEqual(parse("VWX - investigate data tag coordinates"), {
     title: "investigate data tag coordinates",
-    classification: "Inbox",
+    classification: "Standard",
     bucket_id: "vwx",
+    project_id: null,
     due_date: null,
     date_preferences: {},
     tags: [],

@@ -75,6 +75,30 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   );
   assert.equal((await organisationRecords(c)).buckets.length, 5);
 
+  await pg.client.exec(
+    await readFile("db/migrations/004_core_simplicity.sql", "utf8"),
+  );
+  const simplified = (
+    await c.query("select * from tasks where id=$1", [legacy.rows[0].id])
+  ).rows[0];
+  assert.equal(simplified.classification, "Standard");
+  assert.deepEqual(simplified.tags, preserved.rows[0].tags);
+  assert.equal(
+    simplified.priority,
+    preserved.rows[0].priority,
+    "existing priority is retained",
+  );
+  assert.equal(simplified.status, "Waiting");
+  assert.equal(simplified.title, "Existing task");
+  const oldClient = (
+    await c.query(
+      "insert into tasks(user_id,title,classification) values($1,'Previous deployment','Inbox') returning *",
+      [owner],
+    )
+  ).rows[0];
+  assert.equal(oldClient.classification, "Standard");
+  assert.equal(oldClient.priority, "None");
+  await c.query("delete from tasks where id=$1", [oldClient.id]);
   await c.query("delete from tasks where id=$1", [legacy.rows[0].id]);
   const auth = betterAuth(options);
   const signup = await auth.handler(
@@ -339,6 +363,46 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   assert.equal(captured[2].classification, "Downtime");
   assert.equal(captured[3].classification, "Ongoing");
   assert.equal(captured[3].due_date, "2026-10-29");
+  const contextCapture = {
+    request_id: crypto.randomUUID(),
+    lines: ["Project-context task"],
+    defaults: {
+      project_id: project.id,
+      bucket_id: null,
+      classification: "Standard",
+    },
+  };
+  const contextRows = await captureTasks(c, owner, contextCapture);
+  assert.equal(contextRows[0].project_id, project.id);
+  assert.equal(contextRows[0].priority, "None");
+  assert.equal(contextRows[0].status, "Inbox");
+  const legacyReceipt = {
+    request_id: crypto.randomUUID(),
+    lines: ["Legacy receipt task"],
+  };
+  const legacyRecords = await captureTasks(c, owner, {
+    ...legacyReceipt,
+    request_id: crypto.randomUUID(),
+  });
+  await c.query(
+    "insert into capture_batches(defaults,user_id,request_id,lines,records) values($1::jsonb,$2,$3,$4::jsonb,$5::jsonb)",
+    [
+      JSON.stringify({ classification: "Inbox" }),
+      owner,
+      legacyReceipt.request_id,
+      JSON.stringify(legacyReceipt.lines),
+      JSON.stringify(legacyRecords),
+    ],
+  );
+  assert.equal(
+    (
+      await captureTasks(c, owner, {
+        ...legacyReceipt,
+        defaults: { classification: "Standard" },
+      })
+    )[0].id,
+    legacyRecords[0].id,
+  );
   await pg.client.exec("COMMIT");
   // Retry after commit simulates a lost HTTP response. No new rows are written.
   await pg.client.exec(

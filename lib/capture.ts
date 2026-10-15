@@ -8,7 +8,7 @@ import {
   type CaptureDefaults,
 } from "./model";
 
-export const classifications = ["Inbox", "Downtime", "Ongoing"] as const;
+export const classifications = ["Standard", "Downtime", "Ongoing"] as const;
 export const efforts = [
   [15, "15 minutes"],
   [30, "30 minutes"],
@@ -86,7 +86,7 @@ export function resolveDate(expression: string, day = today()): string | null {
 export function parseCapture(input: string, day = today()) {
   const original = input.trim();
   let title = original;
-  let classification: (typeof classifications)[number] = "Inbox";
+  let classification: (typeof classifications)[number] = "Standard";
   const prefix = title.match(/^(downtime|ongoing)\s*[-:]\s*(.+)$/i);
   if (prefix) {
     classification =
@@ -176,7 +176,7 @@ export function parseTaskInput(
 ) {
   let text = input.trim();
   let bucket_id = defaults.bucket_id || null;
-  let classification = defaults.classification || "Inbox";
+  let classification = defaults.classification || "Standard";
   const active = buckets.filter((b) => !b.archived);
   const matches = (name: string) =>
     active.filter((b) =>
@@ -190,13 +190,16 @@ export function parseTaskInput(
       text.match(/^(.+?)\s+[-:]\s*(.+)$/) || text.match(/^([^:]+):\s*(.+)$/);
     if (!prefix) break;
     const key = nameKey(prefix[1]);
-    if (!gotClass && ["downtime", "ongoing", "inbox"].includes(key)) {
+    if (
+      !gotClass &&
+      ["standard", "downtime", "ongoing", "inbox"].includes(key)
+    ) {
       classification =
         key === "downtime"
           ? "Downtime"
           : key === "ongoing"
             ? "Ongoing"
-            : "Inbox";
+            : "Standard";
       gotClass = true;
       text = prefix[2].trim();
       continue;
@@ -230,7 +233,8 @@ export function parseTaskInput(
   else hashtagNames.length = 0;
   const parsed = parseCapture(text, day);
   // parseCapture handles tight class prefixes as well (e.g. Ongoing-task).
-  if (parsed.classification !== "Inbox") classification = parsed.classification;
+  if (parsed.classification !== "Standard")
+    classification = parsed.classification;
   if (!gotBucket) {
     const mentions = active.filter((b) =>
       [b.name, ...b.aliases].some((alias) => {
@@ -251,6 +255,7 @@ export function parseTaskInput(
     title: parsed.title,
     classification,
     bucket_id,
+    project_id: defaults.project_id || null,
     due_date,
     date_preferences,
     tags: canonicalTags([...(defaults.tags || []), ...hashtagNames], tags),
@@ -272,5 +277,25 @@ export function boundedPreview(
     items: lines
       .slice(0, 200)
       .map((line) => parseTaskInput(line, buckets, tags, day, defaults)),
+  };
+}
+
+export function captureContextDefaults(
+  section: string,
+  bucket_id: string | null = null,
+  project_id: string | null = null,
+): CaptureDefaults {
+  return {
+    bucket_id,
+    project_id,
+    classification:
+      section === "Downtime"
+        ? "Downtime"
+        : section === "Ongoing"
+          ? "Ongoing"
+          : "Standard",
+    due_date: null,
+    tags: [],
+    date_preferences: {},
   };
 }

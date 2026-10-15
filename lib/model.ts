@@ -7,7 +7,13 @@ export const statuses = [
   "Blocked",
   "Completed",
 ] as const;
-export const priorities = ["Low", "Medium", "High", "Critical"] as const;
+export const priorities = [
+  "None",
+  "Low",
+  "Medium",
+  "High",
+  "Critical",
+] as const;
 export const projectStatuses = [
   "Planned",
   "Active",
@@ -36,14 +42,17 @@ export const taskSchema = z.object({
   description: z.string().max(20000).default(""),
   notes: z.string().max(20000).default(""),
   status: z.enum(statuses).default("Inbox"),
-  priority: z.enum(priorities).default("Medium"),
+  priority: z.enum(priorities).default("None"),
   project_id: id.default(null),
   parent_id: id.default(null),
   bucket_id: id.default(null),
   start_date: date.default(null),
   due_date: date.default(null),
   person: z.string().max(255).default(""),
-  classification: z.enum(["Inbox", "Downtime", "Ongoing"]).default("Inbox"),
+  classification: z.preprocess(
+    (value) => (value === "Inbox" ? "Standard" : value),
+    z.enum(["Standard", "Downtime", "Ongoing"]).default("Standard"),
+  ),
   assigned_to: z.string().trim().max(255).default(""),
   date_assigned: date.default(null),
   assignment_notes: z.string().max(20000).default(""),
@@ -138,7 +147,11 @@ export function progress(tasks: Task[], id: string) {
 
 export const captureDefaultsSchema = z.object({
   bucket_id: id.optional(),
-  classification: z.enum(["Inbox", "Downtime", "Ongoing"]).optional(),
+  project_id: id.optional(),
+  classification: z
+    .enum(["Inbox", "Standard", "Downtime", "Ongoing"])
+    .transform((value) => (value === "Inbox" ? "Standard" : value))
+    .optional(),
   due_date: date.optional(),
   tags: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   date_preferences: z.record(z.string(), z.literal("Someday")).optional(),
