@@ -149,9 +149,26 @@ export async function writeRecord(
       if (parsed.task_type === "Delegated" && !parsed.date_assigned)
         parsed.date_assigned = today();
     }
+    if (table === "tasks" && "progress_entries" in parsed) {
+      const prior = id
+        ? (
+            await c.query(
+              "select progress_entries,reference_links from tasks where id=$1 and user_id=$2",
+              [id, userId],
+            )
+          ).rows[0]
+        : null;
+      // Append/edit these through dedicated owner-locked actions, never a stale detail form.
+      parsed.progress_entries = prior?.progress_entries || [];
+      parsed.reference_links = prior?.reference_links || [];
+    }
     const entries = Object.entries(parsed);
     const fields = entries.map(([k]) => k);
-    const values = entries.map(([, v]) => v);
+    const values = entries.map(([k, v]) =>
+      ["progress_entries", "reference_links"].includes(k)
+        ? JSON.stringify(v)
+        : v,
+    );
     if (id) {
       result = await c.query(
         `update ${table} set ${fields.map((k, i) => k + "=$" + (i + 1)).join(",")} where id=$${values.length + 1} and user_id=$${values.length + 2} returning *`,

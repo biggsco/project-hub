@@ -31,6 +31,7 @@ export default function ProductivityDashboard({
   onProject,
   onNavigate,
 }: Props) {
+  const [deepWork, setDeepWork] = useState(false);
   const [minutes, setMinutes] = useState(30),
     [nextMinutes, setNextMinutes] = useState(0),
     [showNext, setShowNext] = useState(false),
@@ -59,7 +60,10 @@ export default function ProductivityDashboard({
     attention = needsAttention(tasks, day),
     resume = resumeWork(tasks, projects, day);
   const timeTasks = suitableTasks(tasks, minutes, day).filter(
-    (t) => inFocus(t, day) && !skipped.includes(t.id),
+    (t) =>
+      inFocus(t, day) &&
+      !skipped.includes(t.id) &&
+      (!deepWork || (t.effort_minutes || 0) >= 60),
   );
   const recommendation = timeMode
     ? timeTasks[0]
@@ -116,7 +120,7 @@ export default function ProductivityDashboard({
                 }}
               >
                 <option value={0}>Any time</option>
-                {efforts.slice(0, 4).map(([n, label]) => (
+                {efforts.slice(0, 5).map(([n, label]) => (
                   <option key={n} value={n}>
                     {label}
                   </option>
@@ -218,9 +222,12 @@ export default function ProductivityDashboard({
           <select
             aria-label="Available time"
             value={minutes}
-            onChange={(e) => setMinutes(Number(e.target.value))}
+            onChange={(e) => {
+              setMinutes(Number(e.target.value));
+              setDeepWork(false);
+            }}
           >
-            {efforts.slice(0, 4).map(([n, label]) => (
+            {efforts.slice(0, 5).map(([n, label]) => (
               <option key={n} value={n}>
                 {label}
               </option>
@@ -236,6 +243,17 @@ export default function ProductivityDashboard({
           </button>
           <button className="secondary" onClick={() => onNavigate("Downtime")}>
             Downtime
+          </button>
+          <button
+            className="secondary"
+            onClick={() => {
+              setDeepWork(true);
+              setMinutes(240);
+              setTimeMode(true);
+              setShowNext(true);
+            }}
+          >
+            Deep Work
           </button>
           <button
             className="secondary"
@@ -257,7 +275,7 @@ export default function ProductivityDashboard({
             Pick something for me
           </button>
         </div>
-        <h3>I've got some time</h3>
+        <h3>{deepWork ? "Deep Work — 1 to 4 hours" : "I've got some time"}</h3>
         <p className="muted">
           Actionable work with an estimate that fits. Downtime comes first.
         </p>

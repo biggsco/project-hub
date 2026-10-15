@@ -1,3 +1,4 @@
+import { workbenchAction } from "@/lib/workbench-records";
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { asUser } from "@/lib/db";
@@ -5,11 +6,22 @@ import { loadRecords, writeRecord, captureTasks } from "@/lib/records";
 import { saveContact, recordVisit, peopleRecords } from "@/lib/people-records";
 import { z } from "zod";
 import { organise, organisationRecords } from "@/lib/organisation-records";
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const user = await currentUser();
     if (!user)
       return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+    if (req.nextUrl.searchParams.get("history") === "1")
+      return NextResponse.json(
+        await asUser(user.id, async (c) => ({
+          project_completions: (
+            await c.query(
+              "select id,entity_id,title,created_at from activity where entity_type='projects' and changes->'status'->>'to'='Completed' order by created_at desc limit 500",
+            )
+          ).rows,
+        })),
+        { headers: { "Cache-Control": "no-store" } },
+      );
     return NextResponse.json(await asUser(user.id, loadRecords), {
       headers: { "Cache-Control": "no-store" },
     });
@@ -34,6 +46,19 @@ export async function POST(req: NextRequest) {
     if (!user)
       return NextResponse.json({ error: "Sign in required" }, { status: 401 });
     const b = await req.json();
+    if (
+      [
+        "progress_add",
+        "reference_save",
+        "reference_delete",
+        "steps_import",
+        "subtasks_reorder",
+        "followed_up",
+      ].includes(b.action)
+    )
+      return NextResponse.json(
+        await asUser(user.id, (c) => workbenchAction(c, user.id, b)),
+      );
     if (b.action === "visit")
       return NextResponse.json(
         await asUser(user.id, (c) => recordVisit(c, user.id)),
@@ -66,13 +91,18 @@ export async function POST(req: NextRequest) {
     const message =
       e instanceof z.ZodError
         ? "Check required fields and dates."
-        : code === "23505"
-          ? "That name already exists. Choose another name or merge the tags."
-          : code === "23503"
-            ? "Unlink dependent tasks before deleting, and only link records in your workspace."
-            : code === "P0001"
-              ? "Subtasks cannot form a loop."
-              : "Unable to save. Check the record and try again.";
+        : e instanceof Error &&
+            /steps|progress|references|Import request|Refresh|http or https/.test(
+              e.message,
+            )
+          ? e.message
+          : code === "23505"
+            ? "That name already exists. Choose another name or merge the tags."
+            : code === "23503"
+              ? "Unlink dependent tasks before deleting, and only link records in your workspace."
+              : code === "P0001"
+                ? "Subtasks cannot form a loop."
+                : "Unable to save. Check the record and try again.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

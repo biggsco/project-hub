@@ -7,6 +7,7 @@ import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
 import { organise, organisationRecords } from "../lib/organisation-records";
+import { workbenchAction } from "../lib/workbench-records";
 import { saveContact, peopleRecords, recordVisit } from "../lib/people-records";
 import { provision } from "../lib/provision";
 import { writeRecord, loadRecords, captureTasks } from "../lib/records";
@@ -100,6 +101,9 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   ).rows[0];
   await pg.client.exec(
     await readFile("db/migrations/005_people_productivity.sql", "utf8"),
+  );
+  await pg.client.exec(
+    await readFile("db/migrations/006_workbench.sql", "utf8"),
   );
   const migrated = (
     await c.query("select * from tasks where id=$1", [oldDelegation.id])
@@ -932,6 +936,113 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
         null,
       ),
     /Contact unavailable/,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const progressId = crypto.randomUUID();
+  const progressInput = {
+    action: "progress_add",
+    task_id: discussion.id,
+    text: "Schema investigated",
+    request_id: progressId,
+  };
+  await workbenchAction(c, owner, progressInput);
+  await workbenchAction(c, owner, progressInput);
+  let workTask = (await loadRecords(c)).tasks.find(
+    (t) => t.id === discussion.id,
+  )!;
+  assert.equal(
+    workTask.progress_entries.length,
+    1,
+    "retried progress is added once",
+  );
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...discussion, description: "Stale form updated" },
+    discussion.id,
+  );
+  workTask = (await loadRecords(c)).tasks.find((t) => t.id === discussion.id)!;
+  assert.equal(
+    workTask.progress_entries.length,
+    1,
+    "stale forms cannot replace progress history",
+  );
+  const link = {
+    action: "reference_save",
+    task_id: discussion.id,
+    reference_id: crypto.randomUUID(),
+    title: "Reference",
+    url: "https://example.test/docs",
+  };
+  await workbenchAction(c, owner, link);
+  await assert.rejects(() =>
+    workbenchAction(c, owner, { ...link, url: "javascript:alert(1)" }),
+  );
+  const stepsInput = {
+    action: "steps_import",
+    task_id: discussion.id,
+    request_id: crypto.randomUUID(),
+    titles: ["Inspect schema", "Build prototype", "Inspect schema"],
+  };
+  // Existing team is archived: remove it from parent before adding new associations.
+  await c.query("update tasks set team_id=null where id=$1", [discussion.id]);
+  const imported = await workbenchAction(c, owner, stepsInput);
+  assert.equal(imported.records!.length, 2);
+  assert.equal((await workbenchAction(c, owner, stepsInput)).records!.length, 2);
+  const repeated = await workbenchAction(c, owner, {
+    ...stepsInput,
+    request_id: crypto.randomUUID(),
+  });
+  assert.equal(repeated.records!.length, 0);
+  await assert.rejects(
+    () => workbenchAction(c, owner, { ...stepsInput, titles: ["Changed"] }),
+    /already used/,
+  );
+  await workbenchAction(c, owner, {
+    action: "subtasks_reorder",
+    task_id: discussion.id,
+    ids: imported.records!.map((t: any) => t.id).reverse(),
+  });
+  const importedOrder = (
+    await c.query(
+      "select title from tasks where parent_id=$1 order by subtask_position",
+      [discussion.id],
+    )
+  ).rows;
+  assert.deepEqual(
+    importedOrder.map((t) => t.title),
+    ["Build prototype", "Inspect schema"],
+  );
+  const chase = await workbenchAction(c, owner, {
+    action: "followed_up",
+    task_id: discussion.id,
+    request_id: crypto.randomUUID(),
+    text: "Asked for update",
+    follow_up_date: "2026-12-10",
+  });
+  assert.equal(chase.record.status, discussion.status);
+  assert.equal(new Date(chase.record.due_date).toISOString().slice(0,10), "2026-12-01");
+  assert.equal(chase.record.progress_entries.at(-1).kind, "follow_up");
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  await assert.rejects(
+    () => workbenchAction(c, other, progressInput),
+    /Task unavailable/,
+  );
+  assert.equal(
+    (
+      await c.query("select * from step_imports where request_id=$1", [
+        stepsInput.request_id,
+      ])
+    ).rows.length,
+    0,
   );
   await pg.client.exec("COMMIT");
   await db.destroy();

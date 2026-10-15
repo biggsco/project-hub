@@ -1,4 +1,5 @@
 "use client";
+import { recoverCaptures, recoverDraft } from "@/lib/capture-drafts";
 import { taskTypes, type Team, type Person } from "@/lib/people";
 import PeoplePicker from "./people-picker";
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +20,8 @@ type Submission = {
 };
 export default function QuickAdd({
   onCreated,
+  draftKey,
+  compact = false,
   buckets,
   tags,
   onCreateBucket,
@@ -33,6 +36,8 @@ export default function QuickAdd({
   contextPerson = null,
   meeting = false,
 }: {
+  draftKey?: string;
+  compact?: boolean;
   buckets: Bucket[];
   tags: Tag[];
   onCreateBucket: (name: string) => Promise<Bucket | null>;
@@ -55,6 +60,8 @@ export default function QuickAdd({
   const input = useRef<HTMLInputElement>(null);
   const bulkLock = useRef(false);
   const [text, setText] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [contentType, setContentType] = useState<Task["content_type"]>("Task");
   const [bulk, setBulk] = useState(false);
   const [dump, setDump] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -76,6 +83,7 @@ export default function QuickAdd({
   const [followUp, setFollowUp] = useState<string | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
   const defaults: CaptureDefaults = {
+    content_type: contentType,
     bucket_id: bucketId,
     team_id: teamId,
     person_id: personId,
@@ -109,6 +117,7 @@ export default function QuickAdd({
     } catch {}
   }, []);
   function applyDefaults(values: CaptureDefaults) {
+    setContentType(values.content_type || "Task");
     setBucketId(values.bucket_id || null);
     setTeamId(values.team_id || null);
     setPersonId(values.person_id || null);
@@ -161,16 +170,46 @@ export default function QuickAdd({
     personId,
     taskType,
     followUp,
+    contentType,
   ]);
   useEffect(() => {
-    function key(e: KeyboardEvent) {
-      const editing = (e.target as HTMLElement).matches(
-        "input,textarea,select,button,a,summary,[role=combobox],[contenteditable=true]",
+    if (draftKey) {
+      try {
+        setText(recoverDraft(localStorage.getItem(draftKey + ":draft")));
+        setFailed(recoverCaptures(localStorage.getItem(draftKey + ":pending")));
+      } catch {}
+    }
+    setDraftLoaded(true);
+  }, [draftKey]);
+  useEffect(() => {
+    if (draftKey && draftLoaded) {
+      try {
+        localStorage.setItem(draftKey + ":draft", text);
+      } catch {}
+    }
+  }, [text, draftKey, draftLoaded]);
+  function persistPending(submission: Submission, remove = false) {
+    if (!draftKey) return;
+    try {
+      const pending = recoverCaptures(
+        localStorage.getItem(draftKey + ":pending"),
+      ).filter((s) => s.request_id !== submission.request_id);
+      if (!remove) pending.push(submission);
+      localStorage.setItem(draftKey + ":pending", JSON.stringify(pending));
+    } catch {
+      setError(
+        "Device storage is unavailable. Keep this page open until the save is confirmed.",
       );
-      if (
-        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") ||
-        (!editing && e.key === "q" && !e.metaKey && !e.ctrlKey && !e.altKey)
-      ) {
+    }
+  }
+  useEffect(() => {
+    function key(e: KeyboardEvent) {
+      const editing =
+        e.target instanceof HTMLElement &&
+        e.target.matches(
+          "input,textarea,select,button,a,summary,[role=combobox],[contenteditable=true]",
+        );
+      if (!editing && e.key === "q" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (document.querySelector('[role="dialog"]')) return;
         e.preventDefault();
         input.current?.focus();
@@ -186,6 +225,7 @@ export default function QuickAdd({
     return () => clearTimeout(timer);
   }, [notice]);
   async function send(submission: Submission) {
+    persistPending(submission);
     setSaving((n) => n + 1);
     try {
       const r = await fetch("/api/data", {
@@ -199,6 +239,7 @@ export default function QuickAdd({
         teams: b.teams || teams,
         people: b.people || people,
       });
+      persistPending(submission, true);
       setError("");
       const used = b.records
         .map((t: Task) => t.bucket_id)
@@ -224,9 +265,31 @@ export default function QuickAdd({
       setSaving((n) => n - 1);
     }
   }
+  useEffect(() => {
+    function capture(e: Event) {
+      const title = (e as CustomEvent<string>).detail?.trim();
+      if (!title) return;
+      const submission = {
+        request_id: crypto.randomUUID(),
+        lines: [title],
+        defaults,
+      };
+      setText("");
+      input.current?.focus();
+      send(submission).then((ok) => {
+        if (!ok)
+          setFailed((items) => [
+            ...items.filter((s) => s.request_id !== submission.request_id),
+            submission,
+          ]);
+      });
+    }
+    window.addEventListener("hub-quick-capture", capture);
+    return () => window.removeEventListener("hub-quick-capture", capture);
+  });
   return (
     <section
-      className="quick-add"
+      className={"quick-add" + (compact ? " compact-capture" : "")}
       aria-label="Quick Add"
       onKeyDown={(e) => {
         if (e.key === "Escape")
@@ -249,7 +312,10 @@ export default function QuickAdd({
           setError("");
           input.current?.focus();
           if (!(await send(submission)))
-            setFailed((items) => [...items, submission]);
+            setFailed((items) => [
+              ...items.filter((s) => s.request_id !== submission.request_id),
+              submission,
+            ]);
         }}
       >
         <input
@@ -266,10 +332,26 @@ export default function QuickAdd({
           placeholder="What's on your mind? Type a task and press Enter…"
         />
         <button className="primary" disabled={!text.trim()}>
-          Add task
+          {contentType === "Task"
+            ? "Add task"
+            : "Save " + contentType.toLowerCase()}
         </button>
       </form>
       <div className="capture-controls">
+        <label className="compact">
+          Capture as
+          <select
+            aria-label="Capture content type"
+            value={contentType}
+            onChange={(e) =>
+              setContentType(e.target.value as Task["content_type"])
+            }
+          >
+            {["Task", "Idea", "Note"].map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+        </label>
         <PeoplePicker
           compact
           teams={teams}
@@ -361,7 +443,7 @@ export default function QuickAdd({
         <span>
           {text.trim()
             ? `${parsed.task_type} · ${parsed.classification}${parsed.team_id ? " · " + teams.find((t) => t.id === parsed.team_id)?.name : ""}${parsed.person_id ? " · " + people.find((p) => p.id === parsed.person_id)?.name : ""}${parsed.follow_up_date ? " · Follow up " + parsed.follow_up_date : ""}${parsed.project_id ? " · " + (projectName || "Project") : ""}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
-            : "Capture first, organise later. Focus with Ctrl / ⌘ K or Q."}
+            : "Capture first, organise later. Q focuses capture; Ctrl / ⌘ K opens commands."}
         </span>
         <button
           className="text-button"

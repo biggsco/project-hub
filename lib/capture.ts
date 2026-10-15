@@ -122,6 +122,7 @@ export function previewBulk(text: string, day = today()) {
 }
 export function actionable(t: Task, day = today()) {
   return (
+    (t.content_type || "Task") === "Task" &&
     !t.archived &&
     t.status !== "Completed" &&
     t.status !== "Waiting" &&
@@ -284,7 +285,10 @@ export function parseTaskInput(
     .trim();
   if (withoutTags) text = withoutTags;
   else hashtagNames.length = 0;
-  const parsed = parseCapture(text, day);
+  const parsed =
+    defaults.content_type && defaults.content_type !== "Task"
+      ? { title: text, classification, due_date: null }
+      : parseCapture(text, day);
   // parseCapture handles tight class prefixes as well (e.g. Ongoing-task).
   if (parsed.classification !== "Standard")
     classification = parsed.classification;
@@ -302,13 +306,17 @@ export function parseTaskInput(
     if (mentions.length === 1) bucket_id = mentions[0].id;
   }
   const isChase = task_type === "Follow Up" || task_type === "Delegated";
-  const due_date = (!isChase && parsed.due_date) || defaults.due_date || null;
+  const due_date =
+    defaults.content_type && defaults.content_type !== "Task"
+      ? null
+      : (!isChase && parsed.due_date) || defaults.due_date || null;
   const follow_up_date =
     (isChase && parsed.due_date) || defaults.follow_up_date || null;
   const date_preferences = { ...defaults.date_preferences };
   if (parsed.due_date && !isChase) delete date_preferences.due_date;
   return {
     title: parsed.title,
+    ...(defaults.content_type ? { content_type: defaults.content_type } : {}),
     classification,
     bucket_id,
     project_id: defaults.project_id || null,

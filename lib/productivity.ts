@@ -1,6 +1,9 @@
 import { type Task, type Project, today, addDays, priorities } from "./model";
 import { actionable } from "./capture";
-export const openTask = (t: Task) => !t.archived && t.status !== "Completed";
+export const openTask = (t: Task) =>
+  (t.content_type || "Task") === "Task" &&
+  !t.archived &&
+  t.status !== "Completed";
 export const inFocus = (t: Task, day = today()) =>
   openTask(t) &&
   (!t.snoozed_until || t.snoozed_until <= day) &&

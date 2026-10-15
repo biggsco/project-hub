@@ -4,7 +4,7 @@
 
 ## Automated verification
 
-`npm test`: 39 tests pass, including a PostgreSQL/Better Auth integration suite.
+`npm test`: 49 tests pass, including a PostgreSQL/Better Auth integration suite.
 
 - Title-only capture; independent Standard/Downtime/Ongoing classifications.
 - Supported dates, explicit weekday semantics, Adelaide day boundaries/DST, month-end clamping, leap years and year rollover.
@@ -54,15 +54,26 @@ Phases 3/4 verification:
 
 A simulated React/DOM interaction check also passed meeting-context capture, brief-note persistence, conversion to an action, Welcome back rendering and session-based recommendation skipping, alongside all earlier capture/filter/completion checks. This does not replace live browser/layout verification.
 
-Scope: phases 1–4 of the personal workspace brief; no AI integration.
+Phase 5A–5D verification:
+
+- Migration 006 runs on the populated PostgreSQL/Better Auth test database. Defaults retain existing records; prior migrations are unchanged.
+- SQL tests verify append-only progress/retry IDs, stale-form protection, reference URL validation, subtask append/deduplication/retry protection, reorder, independent followed-up date/status/deadline behaviour and owner isolation for workbench actions and import receipts.
+- Pure tests cover numbered/checklist/JSON parsing, invalid/oversized imports, all prompt templates, individual context exclusions, safe URL schemes, CSV formula protection, nonactionable ideas/notes, preserved idea date wording, recoverable capture payload validation, Radar groups, bounded/deduplicated Reset, explicit-only discussion history, Adelaide completion-date filtering and selected-only achievement exports.
+- An expanded simulated React/DOM check passes all earlier capture/filter/completion flows, plus workbench next-action/progress, step preview/import, individual progress exclusion with copy disabled until regenerated, prompt copying, command-bar Enter capture, ideas conversion, achievements/reset rendering, draft reload recovery and retry after a lost capture response without duplication. API responses are simulated; persistence/authentication use the SQL suite.
+- Production HTTP smoke checks validate manifest/start shortcut, generated 192/512 PNG icon dimensions, public service worker/offline notice, guarded workspace/capture routes and no private data from unauthenticated data/history requests. With no deployment secrets configured, data requests return a guarded 401/503 rather than private content.
+- Production compilation and static TypeScript checks pass. Render build/start/pre-deploy commands are unchanged; no required environment variables or runtime dependencies added.
+
+Scope: phases 1–5D. No AI integration, external transmission or automatic offline synchronisation.
 
 ## Remaining live checks
 
-- The change has not been deployed to Render or tested against its production database. The existing pre-deploy command runs the new numbered migration automatically; migrations 001–004 are unchanged.
+- The change has not been deployed to Render or tested against its production database. The existing pre-deploy command runs the new numbered migration automatically; migrations 001–005 are unchanged.
 - Desktop and mobile visual/browser verification is outstanding. Chromium installation was attempted but the environment returned unusable downloads. DOM checks do not validate layout or real browser behaviour.
-- After merging the pull request, confirm GitHub checks pass, Render pre-deploy reports `Applied 005_people_productivity.sql` (earlier migrations are skipped if already applied), and `/api/health` succeeds.
+- After merging the pull request, confirm GitHub checks pass, Render pre-deploy reports `Applied 005_people_productivity.sql` and `Applied 006_workbench.sql` (earlier migrations are skipped if already applied), and `/api/health` succeeds.
 - Sign in with the existing account; verify legacy tasks/projects remain; capture several tasks consecutively; refresh and confirm persistence.
 - Try `Follow up next Friday`, `Downtime - tidy templates`, `Ongoing - improve MyAVM` and `Prepare goals in 2 weeks` and check the preview before saving.
 - Test Brain Dump, delegation/reassignment/return, date presets/custom date, effort/time suggestions, bucket and tag management, shared tag rename/merge, remembered capture bucket, grouped/flat Downtime, project milestones, snooze visibility and wake-up, search and completion on desktop and phone.
 
-No Render resources were created or charged, no production database was accessed, and no deployment secrets were changed. Existing administrative password recovery remains unchanged. Settings JSON export is not a complete database backup.
+No Render resources were created or charged and no deployment secrets were changed. Existing administrative password recovery remains unchanged. Settings JSON export is not a complete database backup.
+
+Phase 5 live acceptance checks: verify saved progress/references/subtask ordering after refresh; review exclusions before copying a prompt; import supported lists; test physical-device PWA installation/dictation and capture recovery; record an actual discussion; try Radar follow-up/decision actions and Weekly Reset; verify achievements against known completion dates. Private records require the existing signed-in account. Browser/mobile layout and OS installation checks remain outstanding; no live production-database verification is claimed.

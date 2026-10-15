@@ -1,3 +1,4 @@
+import { progressSchema, referenceSchema } from "./workbench";
 import { taskTypes } from "./people";
 import { z } from "zod";
 export const statuses = [
@@ -40,6 +41,11 @@ const id = z.string().uuid().nullable();
 const datePreferences = z.record(z.string(), z.literal("Someday")).default({});
 export const taskSchema = z.object({
   title: z.string().trim().min(1).max(255),
+  awaiting_decision: z.boolean().default(false),
+  content_type: z.enum(["Task", "Idea", "Note"]).default("Task"),
+  progress_entries: z.array(progressSchema).max(500).default([]),
+  reference_links: z.array(referenceSchema).max(100).default([]),
+  subtask_position: z.number().int().min(0).max(1000000).default(0),
   description: z.string().max(20000).default(""),
   notes: z.string().max(20000).default(""),
   status: z.enum(statuses).default("Inbox"),
@@ -122,6 +128,7 @@ export function addDays(s: string, n: number) {
 export function stats(tasks: Task[], projects: Project[], day = today()) {
   const open = tasks.filter(
     (t) =>
+      t.content_type === "Task" &&
       !t.archived &&
       t.status !== "Completed" &&
       (!t.snoozed_until || t.snoozed_until <= day),
@@ -146,7 +153,9 @@ export function stats(tasks: Task[], projects: Project[], day = today()) {
   };
 }
 export function progress(tasks: Task[], id: string) {
-  const rows = tasks.filter((t) => t.project_id === id && !t.archived);
+  const rows = tasks.filter(
+    (t) => t.project_id === id && !t.archived && t.content_type === "Task",
+  );
   return rows.length
     ? Math.round(
         (rows.filter((t) => t.status === "Completed").length / rows.length) *
@@ -156,6 +165,7 @@ export function progress(tasks: Task[], id: string) {
 }
 
 export const captureDefaultsSchema = z.object({
+  content_type: z.enum(["Task", "Idea", "Note"]).optional(),
   bucket_id: id.optional(),
   team_id: id.optional(),
   person_id: id.optional(),
