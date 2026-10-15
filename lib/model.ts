@@ -30,6 +30,7 @@ const date = z
   .transform((s) => s || null)
   .nullable();
 const id = z.string().uuid().nullable();
+const datePreferences = z.record(z.string(), z.literal("Someday")).default({});
 export const taskSchema = z.object({
   title: z.string().trim().min(1).max(255),
   description: z.string().max(20000).default(""),
@@ -41,6 +42,26 @@ export const taskSchema = z.object({
   start_date: date.default(null),
   due_date: date.default(null),
   person: z.string().max(255).default(""),
+  classification: z.enum(["Inbox", "Downtime", "Ongoing"]).default("Inbox"),
+  assigned_to: z.string().trim().max(255).default(""),
+  date_assigned: date.default(null),
+  assignment_notes: z.string().max(20000).default(""),
+  follow_up_date: date.default(null),
+  effort_minutes: z
+    .union([
+      z.literal(15),
+      z.literal(30),
+      z.literal(60),
+      z.literal(120),
+      z.literal(240),
+      z.literal(960),
+    ])
+    .nullable()
+    .default(null),
+  snoozed_until: date.default(null),
+  next_action: z.string().max(2000).default(""),
+  is_milestone: z.boolean().default(false),
+  date_preferences: datePreferences,
   tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
   archived: z.boolean().default(false),
 });
@@ -54,6 +75,8 @@ export const projectSchema = z.object({
   start_date: date.default(null),
   target_date: date.default(null),
   actual_date: date.default(null),
+  next_action: z.string().max(2000).default(""),
+  date_preferences: datePreferences,
 });
 export type Task = z.output<typeof taskSchema> & {
   id: string;
@@ -80,16 +103,24 @@ export function addDays(s: string, n: number) {
   return d.toISOString().slice(0, 10);
 }
 export function stats(tasks: Task[], projects: Project[], day = today()) {
-  const open = tasks.filter((t) => !t.archived && t.status !== "Completed");
+  const open = tasks.filter(
+    (t) =>
+      !t.archived &&
+      t.status !== "Completed" &&
+      (!t.snoozed_until || t.snoozed_until <= day),
+  );
   return {
     outstanding: open.length,
     today: open.filter((t) => t.due_date === day).length,
-    overdue: open.filter((t) => t.due_date && t.due_date < day).length,
+    overdue: open.filter(
+      (t) => t.classification !== "Ongoing" && t.due_date && t.due_date < day,
+    ).length,
     week: open.filter(
       (t) => t.due_date && t.due_date > day && t.due_date <= addDays(day, 7),
     ).length,
     high: open.filter((t) => ["High", "Critical"].includes(t.priority)).length,
-    waiting: open.filter((t) => t.status === "Waiting").length,
+    waiting: open.filter((t) => t.status === "Waiting" || !!t.assigned_to)
+      .length,
     projects: projects.filter((p) => p.status === "Active").length,
   };
 }

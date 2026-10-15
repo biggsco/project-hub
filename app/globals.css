@@ -976,3 +976,237 @@ input[type="checkbox"] {
     font-size: 12px;
   }
 }
+
+/* Fast capture and shared date controls */
+.quick-add {
+  margin-bottom: 28px;
+}
+.quick-add .capture {
+  margin: 0;
+  padding: 12px;
+  border-color: #bbb4cf;
+  box-shadow: 0 3px 14px #20242c08;
+}
+.quick-add .capture input {
+  font-size: 15px;
+}
+.quick-add .capture .primary {
+  color: var(--surface);
+  font-size: 12px;
+}
+.capture-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.capture-hint > span:first-child {
+  flex: 1;
+}
+.brain-dump {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  margin-top: 10px;
+}
+.brain-dump label {
+  margin-top: 0;
+}
+.capture-preview {
+  max-height: 260px;
+  overflow: auto;
+  margin-bottom: 16px;
+}
+.capture-preview > div {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.capture-preview strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.capture-preview small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.capture-failed {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.capture-failed span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.smart-date {
+  position: relative;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.smart-date summary {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 7px;
+  padding: 10px;
+  list-style-position: inside;
+}
+.smart-date details[open] {
+  position: relative;
+  z-index: 5;
+}
+.date-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  background: var(--surface);
+  padding: 10px 0;
+}
+.date-presets button {
+  border: 1px solid var(--line);
+  min-height: 36px;
+  padding: 6px;
+  font-size: 11px;
+}
+.date-presets button:hover {
+  background: var(--soft);
+}
+.task-row .smart-date {
+  margin: 0;
+  text-align: left;
+}
+.task-row .field-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  overflow: hidden;
+}
+.task-row .smart-date summary {
+  padding: 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.task-row .date-presets {
+  position: absolute;
+  right: 0;
+  width: 285px;
+  box-shadow: 0 5px 25px #0002;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.task-row .smart-date details > label {
+  position: absolute;
+  right: 0;
+  top: 225px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 5px 25px #0002;
+}
+.time-panel {
+  margin-bottom: 28px;
+}
+.snooze-filter {
+  margin: 0;
+  flex-direction: row;
+  align-items: center;
+  font-weight: 400;
+}
+.stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 25px;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+.calendar-grid > b {
+  font-size: 11px;
+  text-align: center;
+  padding: 10px 0;
+  color: var(--muted);
+}
+.calendar-day {
+  min-height: 100px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  min-width: 0;
+}
+.calendar-day > b {
+  font-size: 11px;
+  color: var(--muted);
+}
+.calendar-today {
+  border-color: #8e86ab;
+  background: var(--soft);
+}
+.calendar-day button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 10px;
+  margin-top: 5px;
+  padding: 5px;
+  background: var(--soft);
+  overflow-wrap: anywhere;
+}
+aside {
+  overflow-y: auto;
+}
+nav button {
+  white-space: normal;
+}
+@media (max-width: 760px) {
+  .quick-add .capture input {
+    font-size: 16px;
+    padding: 9px 5px;
+  }
+  .quick-add .capture .primary {
+    max-width: none;
+  }
+  .capture-hint {
+    font-size: 10px;
+    gap: 5px;
+  }
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stat:last-child {
+    grid-column: auto;
+  }
+  .calendar-panel {
+    overflow: auto;
+  }
+  .calendar-grid {
+    min-width: 650px;
+  }
+  .calendar-panel .section-heading {
+    flex-wrap: wrap;
+  }
+  .smart-date .date-presets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .task-row .date-presets {
+    width: 260px;
+  }
+  .task-row .smart-date details > label {
+    top: 285px;
+  }
+}

@@ -4,19 +4,32 @@ A private personal project manager running entirely on Render: Next.js, React, T
 
 ## Status
 
-The Phase 1 application and Render migration are implemented and locally tested. **The app is not deployed or live-verified yet.** No external account has been connected or paid service created.
+The frictionless task upgrade is implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql` migration. No new runtime dependencies, AI services or subscriptions are introduced.
 
-Implemented: dashboard statistics, quick Inbox capture, project management and progress, task editor, subtasks, completion/reopening, inline status, duplication, archive, delete confirmation, bulk complete/archive, list/Kanban views, search/filter/sorting, Waiting task view, bookmarkable project routes, database activity, responsive CSS and dark appearance.
+Implemented: universal title-only Quick Add (Enter to save; Ctrl/Command+K or Q to focus), deterministic date/classification preview, date presets with optional custom calendar, Inbox/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
 
-Authentication: email/password sign-in, HttpOnly session cookies, secure cookies over HTTPS, database-persisted login rate limits, disabled public registration, allowlisted owner, password change requiring current password, private administrative account creation and password recovery. Better Auth handles hashing and sessions; passwords are not stored in plaintext.
+Authentication and Render configuration are retained: private owner account, Better Auth sessions, disabled public registration, origin checks and PostgreSQL row-level security. This change has not been deployed or verified against the live Render service.
 
-Remaining: live Render deployment acceptance and desktop/Android browser interaction checks; Phase 2 milestones, calendar, detailed follow-up workflows, recurrence, reminders, CSV import/export, complete backup/restore and advanced filters; Phase 3 PWA installation, accessibility/performance review and production hardening.
+Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import/export, complete backup/restore, offline support and PWA installation. Settings export includes tasks, projects and the latest 100 activity entries; it is not a complete database backup.
 
-Notes/tags are embedded in Phase 1 records; the planned relational notes/tags tables are not yet implemented. Profile editing and timezone selection are not wired up. Tasks use Australia/Adelaide. Settings JSON export contains tasks, projects and 100 recent activity entries; it is **not** a complete database backup. There is no offline support.
+## Capture and dates
+
+- Type a title and press Enter. The field clears immediately and stays focused while saving; failed entries remain available for retry.
+- Prefix `Downtime -` or `Ongoing -` (colon also supported) to classify a task. All other captures default to Inbox.
+- Recognised dates must be at the end of the title: today, tomorrow, weekdays, next/this weekdays, next week, in X days/weeks/months, end of week/month, YYYY-MM-DD or DD/MM/YYYY. Invalid, ambiguous, conditional or unrecognised wording is kept.
+- Dates use Australia/Adelaide, including daylight saving. A bare weekday or “this Friday” means the nearest occurrence including today. “Next Friday” means Friday of the following Monday–Sunday calendar week. “Next week” means next Monday; end of week is the nearest Friday. The preview shows the exact date before saving.
+- On Thursday 15 October 2026, `Follow up next Friday` is due 23 October; `Prepare goals in 2 weeks` is due 29 October. One month from 31 January clamps to the final day of February.
+- Someday and No deadline both have no actual deadline; Someday is retained as an explicit date preference. Ongoing tasks are excluded from overdue highlighting/counts.
+- Brain Dump previews one task per non-empty line (up to 200), then saves all tasks in one transaction. A submission UUID and an owner-isolated receipt prevent duplicate creation on retries, including after a lost response. Identical lines deliberately entered as separate lines remain separate tasks.
+- Delegation uses free-text names, remembered from existing assignments, and never requires colleague accounts. Completion/status and classification remain independent. Reassign in task details, or use Return to my workload.
+- Snooze never changes a deadline. Snoozed tasks wake on the selected date; use Show snoozed, search or a project view to access them earlier. Search includes completed/archived tasks; these retain their status.
+- Effort presets are 15/30/60/120 minutes, half day (240 minutes), or multi-day (960 minutes, used only as a broad estimate). “I've got some time” prioritises Downtime and excludes completed, archived, waiting, blocked, delegated, future-starting, Someday and snoozed work. Unestimated tasks are not guessed to fit.
+- Project target dates, milestones and follow-up dates use the same preset date control. Milestones are project tasks with an explicit marker, retaining the existing task workflow.
+- Notes are editable in task details and note changes are recorded in activity. Both Ongoing tasks and projects have a Next action field; task subtasks remain available.
 
 ## GitHub updates
 
-Source repository: https://github.com/biggsco/project-hub (private).
+Source repository: https://github.com/biggsco/project-hub.
 
 GitHub Actions runs the tests and production build on pushes and pull requests to `main`. Checks do not need the live database or any deployment secrets. Render's Blueprint is configured with `autoDeployTrigger: checksPass` so it deploys updates to `main` after the checks pass. For a manually created Render service, select **Auto-Deploy → After CI Checks Pass** in its Settings.
 

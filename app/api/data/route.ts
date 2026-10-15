@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { asUser } from "@/lib/db";
-import { loadRecords, writeRecord } from "@/lib/records";
+import { loadRecords, writeRecord, captureTasks } from "@/lib/records";
 import { z } from "zod";
 export async function GET() {
   try {
@@ -32,6 +32,10 @@ export async function POST(req: NextRequest) {
     if (!user)
       return NextResponse.json({ error: "Sign in required" }, { status: 401 });
     const b = await req.json();
+    if (b.action === "capture") {
+      const records = await asUser(user.id, (c) => captureTasks(c, user.id, b));
+      return NextResponse.json({ records });
+    }
     const table = z.enum(["tasks", "projects"]).parse(b.table);
     const action = z.enum(["save", "delete"]).parse(b.action);
     const id = b.id ? z.string().uuid().parse(b.id) : null;
