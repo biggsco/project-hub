@@ -7,7 +7,7 @@ import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
 import { provision } from "../lib/provision";
-import { writeRecord, loadRecords } from "../lib/records";
+import { writeRecord, loadRecords, captureTasks } from "../lib/records";
 test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", async () => {
   const pg = new KyselyPGlite();
   const db = new Kysely<any>({ dialect: pg.dialect });
@@ -41,6 +41,22 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     () => provision(c, "other@example.test", "Other", "another-safe-password"),
     /already exists/,
   );
+  // Apply the additive upgrade to an already populated database.
+  const legacy = await c.query(
+    "insert into tasks(user_id,title,person,status) values($1,'Existing task','Legacy contact','Waiting') returning id",
+    [owner],
+  );
+  await pg.client.exec(
+    await readFile("db/migrations/002_frictionless.sql", "utf8"),
+  );
+  const preserved = await c.query("select * from tasks where id=$1", [
+    legacy.rows[0].id,
+  ]);
+  assert.equal(preserved.rows[0].title, "Existing task");
+  assert.equal(preserved.rows[0].person, "Legacy contact");
+  assert.equal(preserved.rows[0].status, "Waiting");
+  assert.equal(preserved.rows[0].classification, "Inbox");
+  await c.query("delete from tasks where id=$1", [legacy.rows[0].id]);
   const auth = betterAuth(options);
   const signup = await auth.handler(
     new Request("http://localhost:3000/api/auth/sign-up/email", {
@@ -281,5 +297,149 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     }
   }
   assert.ok(limited, "Repeated login failures are throttled");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const capture = {
+    request_id: crypto.randomUUID(),
+    lines: [
+      "Review documents",
+      "Follow up next Friday",
+      "Downtime - tidy templates",
+      "Ongoing - improve MyAVM in 2 weeks",
+    ],
+  };
+  const captured = await captureTasks(
+    c,
+    owner,
+    capture,
+    new Date("2026-10-15T01:00:00Z"),
+  );
+  assert.equal(captured.length, 4);
+  assert.equal(captured[1].due_date, "2026-10-23");
+  assert.equal(captured[2].classification, "Downtime");
+  assert.equal(captured[3].classification, "Ongoing");
+  assert.equal(captured[3].due_date, "2026-10-29");
+  await pg.client.exec("COMMIT");
+  // Retry after commit simulates a lost HTTP response. No new rows are written.
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const beforeRetry = (await loadRecords(c)).tasks.length;
+  const retried = await captureTasks(c, owner, capture);
+  assert.deepEqual(
+    retried.map((t: any) => t.id),
+    captured.map((t) => t.id),
+  );
+  assert.equal((await loadRecords(c)).tasks.length, beforeRetry);
+  await assert.rejects(
+    () => captureTasks(c, owner, { ...capture, lines: ["Changed payload"] }),
+    /already used/,
+  );
+  await assert.rejects(() =>
+    captureTasks(c, owner, {
+      request_id: crypto.randomUUID(),
+      lines: ["Would be valid", "x".repeat(300)],
+    }),
+  );
+  assert.equal(
+    (await loadRecords(c)).tasks.length,
+    beforeRetry,
+    "invalid batch writes nothing",
+  );
+  const delegated = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...captured[2],
+      assigned_to: "Sarah Smith",
+      date_assigned: "2026-10-15",
+      follow_up_date: "2026-10-23",
+      assignment_notes: "Review when available",
+      effort_minutes: 30,
+      next_action: "Check current template",
+      snoozed_until: "2026-10-16",
+    },
+    captured[2].id,
+  );
+  assert.equal(delegated.status, "Inbox");
+  assert.equal(delegated.classification, "Downtime");
+  assert.equal(delegated.completed_at, null);
+  assert.equal(delegated.follow_up_date, "2026-10-23");
+  const reassign = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...delegated, assigned_to: "Edward" },
+    delegated.id,
+  );
+  assert.equal(reassign.assigned_to, "Edward");
+  assert.equal(reassign.completed_at, null);
+  const returned = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...reassign,
+      assigned_to: "",
+      date_assigned: null,
+      follow_up_date: null,
+      status: "To Do",
+    },
+    reassign.id,
+  );
+  assert.equal(returned.classification, "Downtime");
+  assert.equal(returned.status, "To Do");
+  const done = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...returned, status: "Completed" },
+    returned.id,
+  );
+  assert.ok(done.completed_at);
+  await pg.client.exec("COMMIT");
+  // Every row, receipt and audit entry rolls back when the enclosing operation fails.
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const rollbackId = crypto.randomUUID();
+  const rolled = await captureTasks(c, owner, {
+    request_id: rollbackId,
+    lines: ["Rolled back"],
+  });
+  await pg.client.exec("ROLLBACK");
+  assert.equal(
+    (await c.query("select * from tasks where id=$1", [rolled[0].id])).rows
+      .length,
+    0,
+  );
+  assert.equal(
+    (
+      await c.query("select * from capture_batches where request_id=$1", [
+        rollbackId,
+      ])
+    ).rows.length,
+    0,
+  );
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  assert.equal(
+    (await c.query("select * from capture_batches")).rows.length,
+    0,
+    "capture receipts are isolated by owner",
+  );
+  assert.equal(
+    (await c.query("select * from tasks where assigned_to='Edward'")).rows
+      .length,
+    0,
+  );
+  await pg.client.exec("COMMIT");
   await db.destroy();
 });

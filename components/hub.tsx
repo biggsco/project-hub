@@ -1,4 +1,14 @@
 "use client";
+import QuickAdd from "./quick-add";
+import SmartDate from "./smart-date";
+import {
+  classifications,
+  efforts,
+  suitableTasks,
+  actionable,
+  assignmentChange,
+} from "@/lib/capture";
+import { taskSchema, projectSchema } from "@/lib/model";
 import { useEffect, useState, useMemo, useRef } from "react";
 import {
   LayoutDashboard,
@@ -41,35 +51,17 @@ const nav = [
   ["Inbox", Inbox],
   ["My Tasks", ListTodo],
   ["Projects", FolderKanban],
-  ["Waiting On", Clock],
+  ["Ongoing", ListTodo],
+  ["Downtime", Clock],
+  ["Delegated / Waiting On", Clock],
+  ["Calendar", CalendarDays],
   ["Completed / Archive", Archive],
   ["Settings", Settings],
 ] as const;
-const emptyTask = {
-  title: "",
-  description: "",
-  notes: "",
-  status: "Inbox",
-  priority: "Medium",
-  project_id: null,
-  parent_id: null,
-  start_date: null,
-  due_date: null,
-  person: "",
-  tags: [],
-  archived: false,
-};
-const emptyProject = {
-  name: "",
-  description: "",
-  notes: "",
-  category: "",
-  status: "Active",
-  priority: "Medium",
-  start_date: null,
-  target_date: null,
-  actual_date: null,
-};
+const emptyTask = taskSchema.parse({ title: "New task" });
+emptyTask.title = "";
+const emptyProject = projectSchema.parse({ name: "New project" });
+emptyProject.name = "";
 export default function Hub({
   email,
   initialProject,
@@ -78,6 +70,12 @@ export default function Hub({
   initialProject?: string;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
+  const [effortFilter, setEffortFilter] = useState("");
+  const [assignmentFilter, setAssignmentFilter] = useState("");
+  const [classificationFilter, setClassificationFilter] = useState("");
+  const [showSnoozed, setShowSnoozed] = useState(false);
+  const [availableTime, setAvailableTime] = useState(30);
+  const [calendarMonth, setCalendarMonth] = useState(today().slice(0, 7));
   const [sort, setSort] = useState("due");
   const [section, setSection] = useState(
       initialProject ? "Projects" : "Dashboard",
@@ -101,7 +99,6 @@ export default function Hub({
       id?: string;
       value: any;
     } | null>(null),
-    [capture, setCapture] = useState(""),
     [collapsed, setCollapsed] = useState(false),
     [mobile, setMobile] = useState(false),
     [view, setView] = useState("List"),
@@ -207,8 +204,13 @@ export default function Hub({
     setStatus("");
     setPriority("");
     setDateFilter("");
+    setSort(s === "Delegated / Waiting On" ? "followup" : "due");
     setProjectFilter("");
     setSelected([]);
+    setEffortFilter("");
+    setAssignmentFilter("");
+    setClassificationFilter("");
+    setShowSnoozed(false);
     setMobile(false);
   }
   function edit(t: Task) {
@@ -220,11 +222,55 @@ export default function Hub({
     () =>
       tasks
         .filter((t) => {
-          if (section === "Completed / Archive") {
-            if (!t.archived && t.status !== "Completed") return false;
-          } else if (t.archived || t.status === "Completed") return false;
-          if (section === "Inbox" && t.status !== "Inbox") return false;
-          if (section === "Waiting On" && t.status !== "Waiting") return false;
+          if (!query) {
+            if (section === "Completed / Archive") {
+              if (!t.archived && t.status !== "Completed") return false;
+            } else if (t.archived || t.status === "Completed") return false;
+          }
+          if (
+            section === "Inbox" &&
+            (t.classification !== "Inbox" ||
+              t.status !== "Inbox" ||
+              !!t.assigned_to)
+          )
+            return false;
+          if (
+            section === "Delegated / Waiting On" &&
+            t.status !== "Waiting" &&
+            !t.assigned_to
+          )
+            return false;
+          if (
+            ["Downtime", "Ongoing"].includes(section) &&
+            t.classification !== section
+          )
+            return false;
+          if (classificationFilter && t.classification !== classificationFilter)
+            return false;
+          if (
+            effortFilter &&
+            (!t.effort_minutes ||
+              t.effort_minutes >
+                (effortFilter === "quick" ? 30 : Number(effortFilter)))
+          )
+            return false;
+          if (effortFilter === "quick" && !actionable(t, day)) return false;
+          if (assignmentFilter === "unassigned" && t.assigned_to) return false;
+          if (
+            assignmentFilter &&
+            assignmentFilter !== "unassigned" &&
+            t.assigned_to !== assignmentFilter
+          )
+            return false;
+          if (
+            !showSnoozed &&
+            !query &&
+            !selectedProject &&
+            section !== "Completed / Archive" &&
+            t.snoozed_until &&
+            t.snoozed_until > day
+          )
+            return false;
           if (selectedProject && t.project_id !== selectedProject) return false;
           if (projectFilter && t.project_id !== projectFilter) return false;
           if (status && t.status !== status) return false;
@@ -236,24 +282,42 @@ export default function Hub({
           if (priority && priority !== "High+" && t.priority !== priority)
             return false;
           if (dateFilter === "today" && t.due_date !== day) return false;
-          if (dateFilter === "overdue" && (!t.due_date || t.due_date >= day))
+          if (
+            dateFilter === "overdue" &&
+            (t.classification === "Ongoing" || !t.due_date || t.due_date >= day)
+          )
             return false;
           if (
             dateFilter === "week" &&
             (!t.due_date || t.due_date <= day || t.due_date > addDays(day, 7))
           )
             return false;
-          return [t.title, t.description, t.notes, t.person, ...t.tags]
+          return [
+            t.title,
+            t.description,
+            t.notes,
+            t.person,
+            t.assigned_to,
+            t.assignment_notes,
+            t.classification,
+            t.next_action,
+            ...t.tags,
+          ]
             .join(" ")
             .toLowerCase()
             .includes(query.toLowerCase());
         })
         .sort((a, b) =>
-          sort === "title"
-            ? a.title.localeCompare(b.title)
-            : sort === "priority"
-              ? priorities.indexOf(b.priority) - priorities.indexOf(a.priority)
-              : (a.due_date || "9999").localeCompare(b.due_date || "9999"),
+          sort === "followup"
+            ? (a.follow_up_date || "9999").localeCompare(
+                b.follow_up_date || "9999",
+              )
+            : sort === "title"
+              ? a.title.localeCompare(b.title)
+              : sort === "priority"
+                ? priorities.indexOf(b.priority) -
+                  priorities.indexOf(a.priority)
+                : (a.due_date || "9999").localeCompare(b.due_date || "9999"),
         ),
     [
       tasks,
@@ -266,6 +330,10 @@ export default function Hub({
       query,
       day,
       sort,
+      effortFilter,
+      assignmentFilter,
+      classificationFilter,
+      showSnoozed,
     ],
   );
   function taskRow(t: Task) {
@@ -298,6 +366,19 @@ export default function Hub({
             {projects.find((p) => p.id === t.project_id)?.name || "Personal"}
             {t.parent_id ? " · Subtask" : ""}
             {t.person ? " · " + t.person : ""}
+            {t.classification !== "Inbox" ? " · " + t.classification : ""}
+            {t.assigned_to ? " · Waiting on " + t.assigned_to : ""}
+            {t.effort_minutes
+              ? " · " + efforts.find(([n]) => n === t.effort_minutes)?.[1]
+              : ""}
+            {t.is_milestone ? " · Milestone" : ""}
+            {t.snoozed_until && t.snoozed_until > day
+              ? " · Snoozed until " + formatDate(t.snoozed_until)
+              : ""}
+            {t.next_action ? " · Next: " + t.next_action : ""}
+            {t.follow_up_date && t.assigned_to
+              ? " · Follow up " + formatDate(t.follow_up_date)
+              : ""}
           </small>
         </button>
         <span className={"badge p-" + t.priority}>{t.priority}</span>
@@ -313,20 +394,30 @@ export default function Hub({
             <option key={s}>{s}</option>
           ))}
         </select>
-        <span
+        <div
           className={
             "date " +
-            (t.due_date && t.due_date < day && t.status !== "Completed"
+            (t.classification !== "Ongoing" &&
+            t.status !== "Completed" &&
+            !t.archived &&
+            t.due_date &&
+            t.due_date < day
               ? "late"
               : "")
           }
         >
-          {t.due_date === day
-            ? "Today"
-            : t.due_date
-              ? formatDate(t.due_date)
-              : "No date"}
-        </span>
+          <SmartDate
+            label={"Deadline for " + t.title}
+            value={t.due_date}
+            someday={t.date_preferences.due_date === "Someday"}
+            onChange={(due_date, someday) => {
+              const date_preferences = { ...t.date_preferences };
+              delete date_preferences.due_date;
+              if (someday) date_preferences.due_date = "Someday";
+              mutate("tasks", { ...t, due_date, date_preferences }, t.id);
+            }}
+          />
+        </div>
       </div>
     );
   }
@@ -352,6 +443,7 @@ export default function Hub({
           <span className="badge">{p.status}</span>
         </div>
         <h3>{p.name}</h3>
+        {p.next_action && <p className="muted">Next: {p.next_action}</p>}
         <p className="muted">
           {p.category || "General"} · {open.length} outstanding
         </p>
@@ -389,8 +481,13 @@ export default function Hub({
               {s === "Inbox" && (
                 <small>
                   {
-                    tasks.filter((t) => !t.archived && t.status === "Inbox")
-                      .length
+                    tasks.filter(
+                      (t) =>
+                        !t.archived &&
+                        t.status === "Inbox" &&
+                        t.classification === "Inbox" &&
+                        !t.assigned_to,
+                    ).length
                   }
                 </small>
               )}
@@ -444,24 +541,57 @@ export default function Hub({
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
-                if (section === "Dashboard") setSection("My Tasks");
+                if (
+                  e.target.value &&
+                  (section !== "My Tasks" || selectedProject)
+                )
+                  go("My Tasks");
               }}
             />
           </div>
           <button
             className="primary"
-            onClick={() =>
-              setEditor({
-                table: "tasks",
-                value: { ...emptyTask, project_id: selectedProject },
-              })
-            }
+            onClick={() => {
+              document
+                .querySelector<HTMLInputElement>(
+                  '[aria-label="Quick Add task"]',
+                )
+                ?.focus();
+              document
+                .querySelector('[aria-label="Quick Add"]')
+                ?.scrollIntoView({ block: "center" });
+            }}
           >
             <Plus size={17} />
-            New Task
+            Quick Add
           </button>
         </header>
         <div className="content">
+          <QuickAdd
+            onCreated={(records) => {
+              setTasks((current) => [
+                ...records,
+                ...current.filter((t) => !records.some((r) => r.id === t.id)),
+              ]);
+              setActivity((current) =>
+                [
+                  ...records.map((t) => ({
+                    id: "capture-" + t.id,
+                    title: t.title,
+                    action: "insert",
+                    created_at: t.created_at,
+                    entity_id: t.id,
+                  })),
+                  ...current.filter(
+                    (a) =>
+                      !records.some(
+                        (t) => a.entity_id === t.id && a.action === "insert",
+                      ),
+                  ),
+                ].slice(0, 100),
+              );
+            }}
+          />
           <div className="page-heading">
             <div>
               <p className="eyebrow">
@@ -613,13 +743,10 @@ export default function Hub({
             <>
               <div className="stats">
                 {[
-                  ["Outstanding", counts.outstanding, "all"],
                   ["Due today", counts.today, "today"],
                   ["Overdue", counts.overdue, "overdue"],
                   ["Next 7 days", counts.week, "week"],
-                  ["High priority", counts.high, "high"],
                   ["Waiting on", counts.waiting, "waiting"],
-                  ["Active projects", counts.projects, "projects"],
                 ].map(([label, n, f]) => (
                   <button
                     className={
@@ -632,7 +759,7 @@ export default function Hub({
                         f === "projects"
                           ? "Projects"
                           : f === "waiting"
-                            ? "Waiting On"
+                            ? "Delegated / Waiting On"
                             : "My Tasks",
                       );
                       if (["today", "overdue", "week"].includes(String(f)))
@@ -649,26 +776,6 @@ export default function Hub({
                   </button>
                 ))}
               </div>
-              <form
-                className="capture"
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (await mutate("tasks", { ...emptyTask, title: capture }))
-                    setCapture("");
-                }}
-              >
-                <Plus size={20} />
-                <input
-                  aria-label="Quick task capture"
-                  value={capture}
-                  onChange={(e) => setCapture(e.target.value)}
-                  placeholder="Something on your mind? Add it to your Inbox."
-                  required
-                />
-                <button disabled={busy || !capture.trim()}>
-                  Add to Inbox <ChevronRight size={15} />
-                </button>
-              </form>
               <div className="dashboard-grid">
                 <section className="panel">
                   <div className="section-heading">
@@ -678,8 +785,7 @@ export default function Hub({
                   {tasks
                     .filter(
                       (t) =>
-                        !t.archived &&
-                        t.status !== "Completed" &&
+                        actionable(t, day) &&
                         (t.due_date === day ||
                           ["High", "Critical"].includes(t.priority)),
                     )
@@ -687,8 +793,7 @@ export default function Hub({
                     .map(taskRow)}
                   {!tasks.some(
                     (t) =>
-                      !t.archived &&
-                      t.status !== "Completed" &&
+                      actionable(t, day) &&
                       (t.due_date === day ||
                         ["High", "Critical"].includes(t.priority)),
                   ) && <Empty text="Nothing urgent. Space to make progress." />}
@@ -701,10 +806,7 @@ export default function Hub({
                   {tasks
                     .filter(
                       (t) =>
-                        !t.archived &&
-                        t.status !== "Completed" &&
-                        t.due_date &&
-                        t.due_date >= day,
+                        actionable(t, day) && t.due_date && t.due_date >= day,
                     )
                     .sort((a, b) => a.due_date!.localeCompare(b.due_date!))
                     .slice(0, 5)
@@ -734,13 +836,36 @@ export default function Hub({
                     ))}
                   {!tasks.some(
                     (t) =>
-                      !t.archived &&
-                      t.status !== "Completed" &&
-                      t.due_date &&
-                      t.due_date >= day,
+                      actionable(t, day) && t.due_date && t.due_date >= day,
                   ) && <Empty text="No upcoming deadlines." />}
                 </section>
               </div>
+              <section className="panel time-panel">
+                <div className="section-heading">
+                  <h2>I've got some time</h2>
+                  <select
+                    aria-label="Available time"
+                    value={availableTime}
+                    onChange={(e) => setAvailableTime(Number(e.target.value))}
+                  >
+                    {efforts.slice(0, 4).map(([n, label]) => (
+                      <option key={n} value={n}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="muted">
+                  Downtime and quick wins that fit. Add an effort estimate in
+                  task details.
+                </p>
+                {suitableTasks(tasks, availableTime, day)
+                  .slice(0, 5)
+                  .map(taskRow)}
+                {!suitableTasks(tasks, availableTime, day).length && (
+                  <Empty text="No tasks with an estimate fit this time yet." />
+                )}
+              </section>
               <div className="section-heading">
                 <h2>Active projects</h2>
                 <button className="text-button" onClick={() => go("Projects")}>
@@ -773,7 +898,13 @@ export default function Hub({
                 <section className="panel">
                   <h2>Waiting on</h2>
                   {tasks
-                    .filter((t) => !t.archived && t.status === "Waiting")
+                    .filter(
+                      (t) =>
+                        !t.archived &&
+                        t.status !== "Completed" &&
+                        (t.status === "Waiting" || !!t.assigned_to) &&
+                        (!t.snoozed_until || t.snoozed_until <= day),
+                    )
                     .slice(0, 5)
                     .map(taskRow)}
                   {!counts.waiting && (
@@ -811,11 +942,100 @@ export default function Hub({
                 </section>
               </div>
             </>
+          ) : section === "Calendar" ? (
+            <section className="panel calendar-panel">
+              <div className="section-heading">
+                <h2>Deadlines and follow-ups</h2>
+                <input
+                  aria-label="Calendar month"
+                  type="month"
+                  value={calendarMonth}
+                  onChange={(e) =>
+                    setCalendarMonth(e.target.value || day.slice(0, 7))
+                  }
+                />
+              </div>
+              <div className="calendar-grid">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+                  <b key={d}>{d}</b>
+                ))}
+                {Array.from(
+                  {
+                    length:
+                      (new Date(calendarMonth + "-01T12:00:00Z").getUTCDay() +
+                        6) %
+                      7,
+                  },
+                  (_, i) => (
+                    <div key={"blank" + i} />
+                  ),
+                )}
+                {Array.from(
+                  {
+                    length: new Date(
+                      Number(calendarMonth.slice(0, 4)),
+                      Number(calendarMonth.slice(5)),
+                      0,
+                    ).getDate(),
+                  },
+                  (_, i) => {
+                    const date =
+                      calendarMonth + "-" + String(i + 1).padStart(2, "0");
+                    return (
+                      <div
+                        className={
+                          "calendar-day " +
+                          (date === day ? "calendar-today" : "")
+                        }
+                        key={date}
+                      >
+                        <b>{i + 1}</b>
+                        {tasks
+                          .filter(
+                            (t) =>
+                              !t.archived &&
+                              t.status !== "Completed" &&
+                              (t.due_date === date ||
+                                t.follow_up_date === date),
+                          )
+                          .map((t) => (
+                            <button key={t.id} onClick={() => edit(t)}>
+                              {t.follow_up_date === date
+                                ? "Follow up: "
+                                : t.is_milestone
+                                  ? "Milestone: "
+                                  : ""}
+                              {t.title}
+                            </button>
+                          ))}
+                        {projects
+                          .filter(
+                            (p) =>
+                              p.target_date === date &&
+                              !["Completed", "Archived"].includes(p.status),
+                          )
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => {
+                                go("Projects");
+                                setSelectedProject(p.id);
+                              }}
+                            >
+                              Project: {p.name}
+                            </button>
+                          ))}
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            </section>
           ) : section === "Projects" && !selectedProject ? (
             <div className="projects-grid">
               {projects
                 .filter((p) =>
-                  [p.name, p.description, p.notes, p.category]
+                  [p.name, p.description, p.notes, p.category, p.next_action]
                     .join(" ")
                     .toLowerCase()
                     .includes(query.toLowerCase()),
@@ -840,6 +1060,42 @@ export default function Hub({
                       : "Not set"}
                   </p>
                   <p className="muted">{project.notes}</p>
+                  {project.next_action && (
+                    <p>
+                      Next action: <strong>{project.next_action}</strong>
+                    </p>
+                  )}
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      setEditor({
+                        table: "tasks",
+                        value: {
+                          ...emptyTask,
+                          project_id: project.id,
+                          status: "To Do",
+                        },
+                      })
+                    }
+                  >
+                    Add project task
+                  </button>{" "}
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      setEditor({
+                        table: "tasks",
+                        value: {
+                          ...emptyTask,
+                          project_id: project.id,
+                          is_milestone: true,
+                          status: "To Do",
+                        },
+                      })
+                    }
+                  >
+                    Add milestone
+                  </button>
                   <div className="progress">
                     <i
                       style={{
@@ -853,7 +1109,13 @@ export default function Hub({
                 <div className="projects-grid">
                   {projects
                     .filter((p) =>
-                      [p.name, p.description, p.notes, p.category]
+                      [
+                        p.name,
+                        p.description,
+                        p.notes,
+                        p.category,
+                        p.next_action,
+                      ]
                         .join(" ")
                         .toLowerCase()
                         .includes(query.toLowerCase()),
@@ -862,6 +1124,56 @@ export default function Hub({
                 </div>
               )}
               <div className="filters">
+                <select
+                  aria-label="Filter classification"
+                  value={classificationFilter}
+                  onChange={(e) => setClassificationFilter(e.target.value)}
+                >
+                  <option value="">All classifications</option>
+                  {classifications.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter effort"
+                  value={effortFilter}
+                  onChange={(e) => setEffortFilter(e.target.value)}
+                >
+                  <option value="">Any effort</option>
+                  <option value="quick">Quick Wins (up to 30 min)</option>
+                  {efforts.map(([n, label]) => (
+                    <option key={n} value={n}>
+                      Up to {label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter assignment"
+                  value={assignmentFilter}
+                  onChange={(e) => setAssignmentFilter(e.target.value)}
+                >
+                  <option value="">Any assignment</option>
+                  <option value="unassigned">
+                    {section === "Downtime"
+                      ? "Available to Delegate"
+                      : "Unassigned"}
+                  </option>
+                  {Array.from(
+                    new Set(tasks.map((t) => t.assigned_to).filter(Boolean)),
+                  )
+                    .sort()
+                    .map((name) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                </select>
+                <label className="snooze-filter">
+                  <input
+                    type="checkbox"
+                    checked={showSnoozed}
+                    onChange={(e) => setShowSnoozed(e.target.checked)}
+                  />
+                  Show snoozed
+                </label>
                 <select
                   aria-label="Filter status"
                   value={status}
@@ -911,6 +1223,7 @@ export default function Hub({
                   onChange={(e) => setSort(e.target.value)}
                 >
                   <option value="due">Due date</option>
+                  <option value="followup">Follow-up date</option>
                   <option value="title">Title</option>
                   <option value="priority">Priority</option>
                 </select>
@@ -983,7 +1296,11 @@ export default function Hub({
                               {t.priority}
                             </span>
                             <small>
-                              {t.due_date ? formatDate(t.due_date) : "No date"}
+                              {t.due_date
+                                ? formatDate(t.due_date)
+                                : t.date_preferences.due_date === "Someday"
+                                  ? "Someday"
+                                  : "No deadline"}
                             </small>
                           </button>
                         ))}
@@ -1153,6 +1470,138 @@ export default function Hub({
                       type="date"
                     />
                   </div>
+                  <Select
+                    label="Classification"
+                    field="classification"
+                    choices={classifications}
+                    editor={editor}
+                    set={setEditor}
+                  />
+                  <label>
+                    Effort estimate
+                    <select
+                      value={editor.value.effort_minutes || ""}
+                      onChange={(e) =>
+                        setEditor({
+                          ...editor,
+                          value: {
+                            ...editor.value,
+                            effort_minutes: Number(e.target.value) || null,
+                          },
+                        })
+                      }
+                    >
+                      <option value="">Not estimated</option>
+                      {efforts.map(([n, label]) => (
+                        <option value={n} key={n}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <Field
+                    name="Next action"
+                    field="next_action"
+                    editor={editor}
+                    set={setEditor}
+                  />
+                  <label>
+                    Assigned to
+                    <input
+                      list="assignee-names"
+                      value={editor.value.assigned_to}
+                      onChange={(e) =>
+                        setEditor({
+                          ...editor,
+                          value: {
+                            ...editor.value,
+                            ...assignmentChange(editor.value, e.target.value),
+                            assigned_to: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Type a name — no account needed"
+                    />
+                  </label>
+                  <datalist id="assignee-names">
+                    {Array.from(
+                      new Set(tasks.map((t) => t.assigned_to).filter(Boolean)),
+                    )
+                      .sort()
+                      .map((name) => (
+                        <option key={name} value={name} />
+                      ))}
+                  </datalist>
+                  {editor.value.assigned_to && (
+                    <>
+                      <Field
+                        name="Date assigned"
+                        field="date_assigned"
+                        editor={editor}
+                        set={setEditor}
+                        type="date"
+                      />
+                      <Field
+                        name="Assignment notes"
+                        field="assignment_notes"
+                        editor={editor}
+                        set={setEditor}
+                        area
+                      />
+                      <Field
+                        name="Follow-up date"
+                        field="follow_up_date"
+                        editor={editor}
+                        set={setEditor}
+                        type="date"
+                      />
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              ...assignmentChange(editor.value, ""),
+                              status: "To Do",
+                            },
+                          })
+                        }
+                      >
+                        Return to my workload
+                      </button>
+                    </>
+                  )}
+                  <SmartDate
+                    label="Snooze until"
+                    snooze
+                    value={editor.value.snoozed_until}
+                    onChange={(snoozed_until) =>
+                      setEditor({
+                        ...editor,
+                        value: { ...editor.value, snoozed_until },
+                      })
+                    }
+                  />
+                  {editor.value.project_id && (
+                    <label className="between">
+                      Project milestone
+                      <input
+                        type="checkbox"
+                        checked={editor.value.is_milestone}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              is_milestone: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  )}
                   <Field
                     name="Person / organisation"
                     field="person"
@@ -1250,6 +1699,12 @@ export default function Hub({
                     editor={editor}
                     set={setEditor}
                     area
+                  />
+                  <Field
+                    name="Next action"
+                    field="next_action"
+                    editor={editor}
+                    set={setEditor}
                   />
                   <Field
                     name="Category"
@@ -1394,7 +1849,10 @@ const descriptions: Record<string, string> = {
   Inbox: "Capture first. Organise when you’re ready.",
   "My Tasks": "Your next steps, organised in one place.",
   Projects: "Give every piece of work a clear direction.",
-  "Waiting On": "Keep track of the responses you need.",
+  "Delegated / Waiting On": "Work you have delegated and responses you need.",
+  Downtime: "Useful work for when capacity becomes available.",
+  Ongoing: "Continuing responsibilities, improvements and next actions.",
+  Calendar: "Deadlines, milestones and follow-ups at a glance.",
   "Completed / Archive": "A record of what you’ve achieved.",
   Settings: "Make this workspace yours.",
 };
@@ -1407,6 +1865,23 @@ function Field({
   area = false,
   type = "text",
 }: any) {
+  if (type === "date")
+    return (
+      <SmartDate
+        label={name}
+        value={editor.value[field]}
+        someday={editor.value.date_preferences?.[field] === "Someday"}
+        onChange={(date, someday) => {
+          const date_preferences = { ...editor.value.date_preferences };
+          delete date_preferences[field];
+          if (someday) date_preferences[field] = "Someday";
+          set({
+            ...editor,
+            value: { ...editor.value, [field]: date, date_preferences },
+          });
+        }}
+      />
+    );
   const props = {
     value: editor.value[field] || "",
     required,
