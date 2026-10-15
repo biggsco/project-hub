@@ -1,4 +1,16 @@
 "use client";
+import Achievements from "./achievements";
+import FollowUpRadar from "./follow-up-radar";
+import WeeklyReset from "./weekly-reset";
+import ConversationHistory from "./conversation-history";
+import CommandBar from "./command-bar";
+import TaskWorkbench from "./task-workbench";
+import PeopleWorkspace from "./people-workspace";
+import PeoplePicker from "./people-picker";
+import TaskTools from "./task-tools";
+import ProductivityDashboard from "./productivity-dashboard";
+import { taskTypes, type Team, type Person } from "@/lib/people";
+import { isWelcomeBack } from "@/lib/productivity";
 import BucketPicker from "./bucket-picker";
 import TagFilter from "./tag-filter";
 import TagPicker from "./tag-picker";
@@ -37,6 +49,7 @@ import {
   LogOut,
   X,
   CalendarDays,
+  Users,
 } from "lucide-react";
 import {
   Task,
@@ -63,9 +76,14 @@ const nav = [
   ["Projects", FolderKanban],
   ["Ongoing", ListTodo],
   ["Downtime", Clock],
+  ["People & Teams", Users],
   ["Delegated / Waiting On", Clock],
   ["Calendar", CalendarDays],
   ["Completed / Archive", Archive],
+  ["Ideas & Notes", ListTodo],
+  ["Follow-up Radar", Clock],
+  ["Weekly Reset", ListTodo],
+  ["Achievements", Archive],
   ["Settings", Settings],
 ] as const;
 const emptyTask = taskSchema.parse({ title: "New task" });
@@ -79,6 +97,14 @@ export default function Hub({
   email: string;
   initialProject?: string;
 }) {
+  const [teams, setTeams] = useState<Team[]>([]),
+    [people, setPeople] = useState<Person[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState<string | null>(null),
+    [selectedPerson, setSelectedPerson] = useState<string | null>(null);
+  const [meeting, setMeeting] = useState(false),
+    [typeFilter, setTypeFilter] = useState("");
+  const [delegationFilter, setDelegationFilter] = useState("");
+  const [welcomeBack, setWelcomeBack] = useState(false);
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [bucketFilter, setBucketFilter] = useState("");
@@ -131,6 +157,7 @@ export default function Hub({
       "button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)";
     dialog?.querySelector<HTMLElement>(selector)?.focus();
     function key(e: KeyboardEvent) {
+      if (document.querySelector(".command-dialog[open]")) return;
       if (e.key === "Escape") {
         setEditor(null);
         return;
@@ -180,6 +207,8 @@ export default function Hub({
         ),
       );
       setProjects(b.projects);
+      setTeams(b.teams || []);
+      setPeople(b.people || []);
       setActivity(b.activity);
       setBuckets(b.buckets || []);
       const nextTags: Tag[] = b.tags || [];
@@ -211,6 +240,111 @@ export default function Hub({
     if (new URLSearchParams(location.search).has("reset"))
       setSection("Settings");
   }, []);
+  useEffect(() => {
+    let active = true,
+      lastVisit = 0;
+    async function visit() {
+      if (Date.now() - lastVisit < 3600000) return;
+      lastVisit = Date.now();
+      try {
+        const r = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "visit" }),
+        });
+        if (r.ok) {
+          const b = await r.json();
+          if (active && isWelcomeBack(b.previous)) setWelcomeBack(true);
+        }
+      } catch {}
+    }
+    visit();
+    const focus = () => {
+      if (document.visibilityState === "visible") visit();
+    };
+    document.addEventListener("visibilitychange", focus);
+    return () => {
+      active = false;
+      document.removeEventListener("visibilitychange", focus);
+    };
+  }, []);
+  async function patchTask(t: Task, patch: Partial<Task>) {
+    if (pendingTaskIds.current.has(t.id)) return false;
+    pendingTaskIds.current.add(t.id);
+    setPendingTasks([...pendingTaskIds.current]);
+    setError("");
+    try {
+      const r = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "tasks",
+          action: "save",
+          id: t.id,
+          value: { ...t, ...patch },
+        }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Unable to save task.");
+      setTasks((current) =>
+        current.map((row) => (row.id === t.id ? b.record : row)),
+      );
+      setEditor((current) =>
+        current?.table === "tasks" && current.id === t.id
+          ? { ...current, value: { ...current.value, ...patch } }
+          : current,
+      );
+      if (b.people) setPeople(b.people);
+      if (b.teams) setTeams(b.teams);
+      setActivity((current) =>
+        [
+          {
+            id: crypto.randomUUID(),
+            entity_id: t.id,
+            title: b.record.title,
+            action: "update",
+            created_at: b.record.updated_at,
+          },
+          ...current,
+        ].slice(0, 100),
+      );
+      return true;
+    } catch (e) {
+      setError((e as Error).message);
+      return false;
+    } finally {
+      pendingTaskIds.current.delete(t.id);
+      setPendingTasks([...pendingTaskIds.current]);
+    }
+  }
+  async function workbench(input: Record<string, unknown>) {
+    const r = await fetch("/api/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const b = await r.json();
+    if (!r.ok) throw Error(b.error || "Unable to update workbench");
+    const records = b.records || [b.record].filter(Boolean);
+    setTasks((current) => [
+      ...records,
+      ...current.filter((t) => !records.some((r: Task) => r.id === t.id)),
+    ]);
+    setEditor((current) =>
+      current?.table === "tasks" && b.record?.id === current.id
+        ? {
+            ...current,
+            value: {
+              ...current.value,
+              progress_entries: b.record.progress_entries,
+              reference_links: b.record.reference_links,
+              follow_up_date: b.record.follow_up_date,
+            },
+          }
+        : current,
+    );
+    return b;
+  }
   async function mutate(
     table: "tasks" | "projects",
     value: any,
@@ -313,6 +447,11 @@ export default function Hub({
     history.replaceState(null, "", "/");
     setSection(s);
     setSelectedProject(null);
+    setSelectedTeam(null);
+    setSelectedPerson(null);
+    setMeeting(false);
+    setTypeFilter("");
+    setDelegationFilter("");
     setStatus("");
     setPriority("");
     setDateFilter("");
@@ -328,6 +467,16 @@ export default function Hub({
     setMobile(false);
   }
   function edit(t: Task) {
+    try {
+      const key = `hub-recent-tasks:${email}`;
+      const old = JSON.parse(localStorage.getItem(key) || "[]");
+      localStorage.setItem(
+        key,
+        JSON.stringify(
+          [t.id, ...old.filter((id: string) => id !== t.id)].slice(0, 20),
+        ),
+      );
+    } catch {}
     setEditor({ table: "tasks", id: t.id, value: { ...t } });
   }
   const day = today(),
@@ -336,6 +485,19 @@ export default function Hub({
     () =>
       tasks
         .filter((t) => {
+          if (
+            !query &&
+            section === "Ideas & Notes" &&
+            t.content_type === "Task"
+          )
+            return false;
+          if (
+            !query &&
+            section !== "Ideas & Notes" &&
+            section !== "Inbox" &&
+            t.content_type !== "Task"
+          )
+            return false;
           if (!query) {
             if (section === "Completed / Archive") {
               if (!t.archived && t.status !== "Completed") return false;
@@ -351,7 +513,8 @@ export default function Hub({
           if (
             section === "Delegated / Waiting On" &&
             t.status !== "Waiting" &&
-            !t.assigned_to
+            !t.assigned_to &&
+            !["Delegated", "Follow Up"].includes(t.task_type)
           )
             return false;
           if (
@@ -401,6 +564,22 @@ export default function Hub({
             return false;
           if (!matchesTags(t.tags, tagFilter)) return false;
           if (status && t.status !== status) return false;
+          if (typeFilter && t.task_type !== typeFilter) return false;
+          if (section === "Delegated / Waiting On") {
+            if (
+              delegationFilter === "delegated" &&
+              t.task_type !== "Delegated" &&
+              !t.assigned_to
+            )
+              return false;
+            if (delegationFilter === "followup" && t.task_type !== "Follow Up")
+              return false;
+            if (
+              delegationFilter === "overdue" &&
+              (!t.follow_up_date || t.follow_up_date >= day)
+            )
+              return false;
+          }
           if (
             priority === "High+" &&
             !["High", "Critical"].includes(t.priority)
@@ -428,6 +607,9 @@ export default function Hub({
             t.assignment_notes,
             t.classification,
             t.next_action,
+            t.task_type,
+            teams.find((team) => team.id === t.team_id)?.name || "",
+            people.find((p) => p.id === t.person_id)?.name || "",
             buckets.find((b) => b.id === t.bucket_id)?.name || "",
             ...t.tags,
           ]
@@ -475,33 +657,47 @@ export default function Hub({
       buckets,
       bucketFilter,
       tagFilter,
+      teams,
+      people,
+      typeFilter,
+      delegationFilter,
     ],
   );
-  function taskRow(t: Task) {
+  function taskRow(t: Task, focus = false) {
     return (
       <div className="task-row" key={t.id}>
-        <button
-          disabled={busy || pendingTasks.includes(t.id)}
-          className={"check " + (t.status === "Completed" ? "checked" : "")}
-          aria-label={
-            t.status === "Completed"
-              ? "Reopen " + t.title
-              : "Complete " + t.title
-          }
-          aria-busy={pendingTasks.includes(t.id)}
-          onClick={() => completeTask(t)}
-        >
-          {t.status === "Completed" && <Check size={13} />}
-        </button>
+        {t.content_type === "Task" && (
+          <button
+            disabled={busy || pendingTasks.includes(t.id)}
+            className={"check " + (t.status === "Completed" ? "checked" : "")}
+            aria-label={
+              t.status === "Completed"
+                ? "Reopen " + t.title
+                : "Complete " + t.title
+            }
+            aria-busy={pendingTasks.includes(t.id)}
+            onClick={() => completeTask(t)}
+          >
+            {t.status === "Completed" && <Check size={13} />}
+          </button>
+        )}
         <button
           className="task-title"
           disabled={pendingTasks.includes(t.id)}
           onClick={() => edit(t)}
         >
           <strong>{t.title}</strong>
+          {t.content_type !== "Task" && <small>{t.content_type}</small>}
           <small>
             {projects.find((p) => p.id === t.project_id)?.name || "Personal"}
             {t.parent_id ? " · Subtask" : ""}
+            {t.task_type !== "To Do" ? " · " + t.task_type : ""}
+            {t.team_id
+              ? " · " + teams.find((team) => team.id === t.team_id)?.name
+              : ""}
+            {t.person_id && t.person_id !== t.assigned_person_id
+              ? " · " + people.find((p) => p.id === t.person_id)?.name
+              : ""}
             {t.person ? " · " + t.person : ""}
             {t.bucket_id
               ? " · " +
@@ -526,43 +722,66 @@ export default function Hub({
         {t.priority !== "None" && (
           <span className={"badge p-" + t.priority}>{t.priority}</span>
         )}
-        <select
-          aria-label={"Status for " + t.title}
-          value={t.status}
-          disabled={busy || pendingTasks.includes(t.id)}
-          onChange={(e) =>
-            mutate("tasks", { ...t, status: e.target.value }, t.id)
-          }
-        >
-          {statuses.map((s) => (
-            <option key={s}>{s}</option>
-          ))}
-        </select>
-        <div
-          className={
-            "date " +
-            (t.classification !== "Ongoing" &&
-            t.status !== "Completed" &&
-            !t.archived &&
-            t.due_date &&
-            t.due_date < day
-              ? "late"
-              : "")
-          }
-        >
-          <SmartDate
-            label={"Deadline for " + t.title}
-            value={t.due_date}
-            someday={t.date_preferences.due_date === "Someday"}
+        {t.content_type === "Task" && (
+          <select
+            aria-label={"Status for " + t.title}
+            value={t.status}
             disabled={busy || pendingTasks.includes(t.id)}
-            onChange={(due_date, someday) => {
-              const date_preferences = { ...t.date_preferences };
-              delete date_preferences.due_date;
-              if (someday) date_preferences.due_date = "Someday";
-              mutate("tasks", { ...t, due_date, date_preferences }, t.id);
-            }}
+            onChange={(e) =>
+              mutate("tasks", { ...t, status: e.target.value }, t.id)
+            }
+          >
+            {statuses.map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        )}
+        {t.content_type === "Task" && (
+          <div
+            className={
+              "date " +
+              (t.classification !== "Ongoing" &&
+              t.status !== "Completed" &&
+              !t.archived &&
+              t.due_date &&
+              t.due_date < day
+                ? "late"
+                : "")
+            }
+          >
+            <SmartDate
+              label={"Deadline for " + t.title}
+              value={t.due_date}
+              someday={t.date_preferences.due_date === "Someday"}
+              disabled={busy || pendingTasks.includes(t.id)}
+              onChange={(due_date, someday) => {
+                const date_preferences = { ...t.date_preferences };
+                delete date_preferences.due_date;
+                if (someday) date_preferences.due_date = "Someday";
+                mutate("tasks", { ...t, due_date, date_preferences }, t.id);
+              }}
+            />
+          </div>
+        )}
+        {t.content_type === "Task" ? (
+          <TaskTools
+            task={t}
+            people={people}
+            onPatch={patchTask}
+            onComplete={completeTask}
+            disabled={busy || pendingTasks.includes(t.id)}
+            focus={focus}
           />
-        </div>
+        ) : (
+          <button
+            className="text-button"
+            onClick={() =>
+              patchTask(t, { content_type: "Task", status: "Inbox" })
+            }
+          >
+            Convert to task
+          </button>
+        )}
       </div>
     );
   }
@@ -615,29 +834,69 @@ export default function Hub({
         </a>
         <p className="eyebrow sidebar-label">MY WORKSPACE</p>
         <nav>
-          {nav.map(([s, Icon]) => (
-            <button
-              key={s}
-              className={section === s ? "active" : ""}
-              onClick={() => go(s)}
-            >
-              <Icon size={19} />
-              <span>{s}</span>
-              {s === "Inbox" && (
-                <small>
-                  {
-                    tasks.filter(
-                      (t) =>
-                        !t.archived &&
-                        t.status === "Inbox" &&
-                        t.classification === "Standard" &&
-                        !t.assigned_to,
-                    ).length
-                  }
-                </small>
-              )}
-            </button>
-          ))}
+          {nav
+            .filter(
+              ([s]) =>
+                ![
+                  "Ongoing",
+                  "Delegated / Waiting On",
+                  "Completed / Archive",
+                  "Settings",
+                  "Ideas & Notes",
+                  "Follow-up Radar",
+                  "Weekly Reset",
+                  "Achievements",
+                ].includes(s),
+            )
+            .map(([s, Icon]) => (
+              <button
+                key={s}
+                className={section === s ? "active" : ""}
+                onClick={() => go(s)}
+              >
+                <Icon size={19} />
+                <span>{s}</span>
+                {s === "Inbox" && (
+                  <small>
+                    {
+                      tasks.filter(
+                        (t) =>
+                          !t.archived &&
+                          t.status === "Inbox" &&
+                          t.classification === "Standard" &&
+                          !t.assigned_to,
+                      ).length
+                    }
+                  </small>
+                )}
+              </button>
+            ))}
+          <details className="secondary-nav">
+            <summary>More views</summary>
+            {nav
+              .filter(([s]) =>
+                [
+                  "Ongoing",
+                  "Delegated / Waiting On",
+                  "Completed / Archive",
+                  "Settings",
+                  "Ideas & Notes",
+                  "Follow-up Radar",
+                  "Weekly Reset",
+                  "Achievements",
+                ].includes(s),
+              )
+              .map(([s, Icon]) => (
+                <button
+                  key={s}
+                  className={section === s ? "active" : ""}
+                  onClick={() => go(s)}
+                >
+                  <Icon size={19} />
+                  <span>{s}</span>
+                </button>
+              ))}
+          </details>
         </nav>
         <div className="sidebar-bottom">
           <button onClick={() => setCollapsed(!collapsed)}>
@@ -678,6 +937,28 @@ export default function Hub({
           <div className="breadcrumb">
             Workspace <ChevronRight size={14} /> {title}
           </div>
+          <CommandBar
+            recentKey={`hub-recent-tasks:${email}`}
+            tasks={tasks}
+            projects={projects}
+            buckets={buckets}
+            directory={{ teams, people }}
+            onTask={edit}
+            onProject={(p) => {
+              go("Projects");
+              setSelectedProject(p.id);
+            }}
+            onBucket={(id) => {
+              go("Downtime");
+              setBucketFilter(id);
+            }}
+            onContact={(team, person) => {
+              go("People & Teams");
+              setSelectedTeam(team);
+              setSelectedPerson(person);
+            }}
+            onNavigate={go}
+          />
           <div className="search">
             <Search size={17} />
             <input
@@ -713,17 +994,27 @@ export default function Hub({
         </header>
         <div className="content">
           <QuickAdd
+            draftKey={`hub-capture:${email}`}
             buckets={buckets}
             tags={tags}
             onCreateBucket={createBucket}
+            teams={teams}
+            people={people}
+            contextTeam={selectedTeam}
+            contextPerson={selectedPerson}
+            meeting={meeting}
             contextSection={section}
-            contextKey={`${section}:${selectedProject || ""}:${bucketFilter}`}
+            contextKey={`${section}:${selectedProject || ""}:${bucketFilter}:${selectedTeam || ""}:${selectedPerson || ""}:${meeting}`}
             contextProject={selectedProject}
             projectName={project?.name}
             contextBucket={
               bucketFilter === "none" ? null : bucketFilter || undefined
             }
-            onCreated={(records, libraryTags) => {
+            onCreated={(records, libraryTags, directory) => {
+              if (directory) {
+                setTeams(directory.teams);
+                setPeople(directory.people);
+              }
               setTags((current) => [
                 ...libraryTags,
                 ...current.filter(
@@ -902,6 +1193,8 @@ export default function Hub({
                             activity,
                             buckets,
                             tags,
+                            teams,
+                            people,
                           },
                           null,
                           2,
@@ -918,208 +1211,142 @@ export default function Hub({
                 Export data
               </button>
             </div>
+          ) : section === "Achievements" ? (
+            <Achievements
+              tasks={tasks}
+              projects={projects}
+              buckets={buckets}
+              directory={{ teams, people }}
+              onOpen={edit}
+            />
+          ) : section === "Follow-up Radar" ? (
+            <FollowUpRadar
+              tasks={tasks}
+              onAction={workbench}
+              onPatch={patchTask}
+              onComplete={completeTask}
+              onOpen={edit}
+            />
+          ) : section === "Weekly Reset" ? (
+            <WeeklyReset
+              tasks={tasks}
+              projects={projects}
+              onPatch={patchTask}
+              onComplete={completeTask}
+              onOpen={edit}
+              onProject={(p) => {
+                go("Projects");
+                setSelectedProject(p.id);
+              }}
+            />
           ) : section === "Dashboard" ? (
             <>
-              <div className="stats">
-                {[
-                  ["Due today", counts.today, "today"],
-                  ["Overdue", counts.overdue, "overdue"],
-                  ["Next 7 days", counts.week, "week"],
-                  ["Waiting on", counts.waiting, "waiting"],
-                ].map(([label, n, f]) => (
-                  <button
-                    className={
-                      "stat " +
-                      (f === "overdue" && Number(n) > 0 ? "attention" : "")
-                    }
-                    key={f}
-                    onClick={() => {
-                      go(
-                        f === "projects"
-                          ? "Projects"
-                          : f === "waiting"
-                            ? "Delegated / Waiting On"
-                            : "My Tasks",
-                      );
-                      if (["today", "overdue", "week"].includes(String(f)))
-                        setDateFilter(String(f));
-                      if (f === "high") setPriority("High+");
-                    }}
-                  >
-                    <span>{label}</span>
-                    <strong>{n}</strong>
-                    <small>
-                      View {f === "projects" ? "projects" : "tasks"}{" "}
-                      <ChevronRight size={12} />
-                    </small>
-                  </button>
-                ))}
-              </div>
-              <div className="dashboard-grid">
-                <section className="panel">
-                  <div className="section-heading">
-                    <h2>Today's priorities</h2>
-                    <span className="badge">Focus</span>
-                  </div>
-                  {tasks
-                    .filter(
-                      (t) =>
-                        actionable(t, day) &&
-                        (t.due_date === day ||
-                          ["High", "Critical"].includes(t.priority)),
-                    )
-                    .slice(0, 8)
-                    .map(taskRow)}
-                  {!tasks.some(
-                    (t) =>
-                      actionable(t, day) &&
-                      (t.due_date === day ||
-                        ["High", "Critical"].includes(t.priority)),
-                  ) && <Empty text="Nothing urgent. Space to make progress." />}
-                </section>
-                <section className="panel">
-                  <div className="section-heading">
-                    <h2>Upcoming deadlines</h2>
-                    <CalendarDays size={18} />
-                  </div>
-                  {tasks
-                    .filter(
-                      (t) =>
-                        actionable(t, day) && t.due_date && t.due_date >= day,
-                    )
-                    .sort((a, b) => a.due_date!.localeCompare(b.due_date!))
-                    .slice(0, 5)
+              <div className="conversation-shortcuts panel">
+                <h2>Your conversations</h2>
+                <div className="inline-actions">
+                  {teams
+                    .filter((t) => !t.archived)
+                    .slice(0, 6)
                     .map((t) => (
                       <button
-                        className="deadline"
+                        className="secondary"
                         key={t.id}
-                        onClick={() => edit(t)}
+                        onClick={() => {
+                          go("People & Teams");
+                          setSelectedTeam(t.id);
+                          setMeeting(true);
+                        }}
                       >
-                        <span className="date-block">
-                          {t.due_date?.slice(8)}
-                          <small>
-                            {new Date(
-                              t.due_date + "T12:00:00",
-                            ).toLocaleDateString("en-AU", { month: "short" })}
-                          </small>
-                        </span>
-                        <span>
-                          <b>{t.title}</b>
-                          <small>
-                            {projects.find((p) => p.id === t.project_id)
-                              ?.name || "Personal"}
-                          </small>
-                        </span>
-                        <ChevronRight size={16} />
+                        {t.name}
                       </button>
                     ))}
-                  {!tasks.some(
-                    (t) =>
-                      actionable(t, day) && t.due_date && t.due_date >= day,
-                  ) && <Empty text="No upcoming deadlines." />}
-                </section>
-              </div>
-              <section className="panel time-panel">
-                <div className="section-heading">
-                  <h2>I've got some time</h2>
-                  <select
-                    aria-label="Available time"
-                    value={availableTime}
-                    onChange={(e) => setAvailableTime(Number(e.target.value))}
-                  >
-                    {efforts.slice(0, 4).map(([n, label]) => (
-                      <option key={n} value={n}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <p className="muted">
-                  Downtime and quick wins that fit. Add an effort estimate in
-                  task details.
-                </p>
-                {suitableTasks(tasks, availableTime, day)
-                  .slice(0, 5)
-                  .map(taskRow)}
-                {!suitableTasks(tasks, availableTime, day).length && (
-                  <Empty text="No tasks with an estimate fit this time yet." />
-                )}
-              </section>
-              <div className="section-heading">
-                <h2>Active projects</h2>
-                <button className="text-button" onClick={() => go("Projects")}>
-                  View all <ChevronRight size={14} />
-                </button>
-              </div>
-              <div className="projects-grid">
-                {projects
-                  .filter((p) => p.status === "Active")
-                  .slice(0, 6)
-                  .map(projectCard)}
-              </div>
-              {!projects.some((p) => p.status === "Active") && (
-                <div className="panel">
-                  <Empty text="Create a project to give your work a home." />
                   <button
-                    className="secondary"
-                    onClick={() =>
-                      setEditor({
-                        table: "projects",
-                        value: { ...emptyProject },
-                      })
-                    }
+                    className="text-button"
+                    onClick={() => go("People & Teams")}
                   >
-                    Create your first project
+                    All people & teams
+                  </button>
+                  <button
+                    className="text-button"
+                    onClick={() => go("Weekly Reset")}
+                  >
+                    Weekly Reset
                   </button>
                 </div>
-              )}
-              <div className="dashboard-grid lower">
-                <section className="panel">
-                  <h2>Waiting on</h2>
-                  {tasks
-                    .filter(
-                      (t) =>
-                        !t.archived &&
-                        t.status !== "Completed" &&
-                        (t.status === "Waiting" || !!t.assigned_to) &&
-                        (!t.snoozed_until || t.snoozed_until <= day),
-                    )
-                    .slice(0, 5)
-                    .map(taskRow)}
-                  {!counts.waiting && (
-                    <Empty text="No outstanding responses." />
-                  )}
-                </section>
-                <section className="panel">
-                  <h2>Recent activity</h2>
-                  {activity.slice(0, 6).map((a) => (
-                    <div className="activity" key={a.id}>
-                      <span className="activity-dot" />
-                      <div>
-                        <b>{a.title}</b>
-                        <small>
-                          {a.action === "insert"
-                            ? "Created"
-                            : a.action === "delete"
-                              ? "Deleted"
-                              : "Updated"}{" "}
-                          ·{" "}
-                          {new Date(a.created_at).toLocaleString("en-AU", {
-                            timeZone: "Australia/Adelaide",
-                            day: "numeric",
-                            month: "short",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
-                        </small>
-                      </div>
-                    </div>
-                  ))}
-                  {!activity.length && (
-                    <Empty text="Your progress will appear here." />
-                  )}
-                </section>
               </div>
+              <FollowUpRadar
+                compact
+                tasks={tasks}
+                onAction={workbench}
+                onPatch={patchTask}
+                onComplete={completeTask}
+                onOpen={edit}
+                onExpand={() => go("Follow-up Radar")}
+              />
+              <ProductivityDashboard
+                tasks={tasks}
+                projects={projects}
+                welcomeBack={welcomeBack}
+                renderTask={taskRow}
+                onOpen={edit}
+                onComplete={completeTask}
+                onPatch={patchTask}
+                onProject={(p) => {
+                  go("Projects");
+                  history.pushState(null, "", "/projects/" + p.id);
+                  setSelectedProject(p.id);
+                }}
+                onNavigate={(s, filter) => {
+                  go(s);
+                  if (filter === "quick") setEffortFilter("quick");
+                  if (filter === "delegate") setAssignmentFilter("unassigned");
+                }}
+              />
+              <details className="panel dashboard-details">
+                <summary>Recent activity & workspace counts</summary>
+                <p className="muted">
+                  {counts.today} due today · {counts.waiting} waiting on ·{" "}
+                  {counts.projects} active projects
+                </p>
+                {activity.slice(0, 6).map((a) => (
+                  <p key={a.id}>
+                    {a.title}{" "}
+                    <small className="muted">
+                      · {a.action} ·{" "}
+                      {new Date(a.created_at).toLocaleString("en-AU", {
+                        timeZone: "Australia/Adelaide",
+                      })}
+                    </small>
+                  </p>
+                ))}
+              </details>
+            </>
+          ) : section === "People & Teams" ? (
+            <>
+              {(selectedTeam || selectedPerson) && (
+                <ConversationHistory
+                  tasks={tasks}
+                  directory={{ teams, people }}
+                  teamId={selectedTeam}
+                  personId={selectedPerson}
+                  onOpen={edit}
+                />
+              )}
+              <PeopleWorkspace
+                teams={teams}
+                people={people}
+                tasks={tasks}
+                teamId={selectedTeam}
+                personId={selectedPerson}
+                onSelect={(team, person) => {
+                  setSelectedTeam(team);
+                  setSelectedPerson(person);
+                }}
+                meeting={meeting}
+                onMeeting={setMeeting}
+                renderTask={(t) => taskRow(t)}
+                manage={manage}
+              />
             </>
           ) : section === "Calendar" ? (
             <section className="panel calendar-panel">
@@ -1429,6 +1656,28 @@ export default function Hub({
               )}
               <div className="filters">
                 <select
+                  aria-label="Filter task type"
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value)}
+                >
+                  <option value="">All task types</option>
+                  {taskTypes.map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </select>
+                {section === "Delegated / Waiting On" && (
+                  <select
+                    aria-label="Waiting view"
+                    value={delegationFilter}
+                    onChange={(e) => setDelegationFilter(e.target.value)}
+                  >
+                    <option value="">All waiting / delegated</option>
+                    <option value="delegated">Delegated</option>
+                    <option value="followup">Follow Up</option>
+                    <option value="overdue">Overdue follow-ups</option>
+                  </select>
+                )}
+                <select
                   aria-label="Filter bucket"
                   value={bucketFilter}
                   onChange={(e) => setBucketFilter(e.target.value)}
@@ -1695,7 +1944,7 @@ export default function Hub({
                                 Add here
                               </button>
                             </div>
-                            {rows.map(taskRow)}
+                            {rows.map((t) => taskRow(t))}
                           </section>
                         );
                       })
@@ -1742,8 +1991,9 @@ export default function Hub({
           >
             <div className="section-heading">
               <h2>
-                {editor.id ? "Edit" : "New"}{" "}
-                {editor.table === "tasks" ? "task" : "project"}
+                {editor.id && editor.table === "tasks"
+                  ? editor.value.title
+                  : `${editor.id ? "Edit" : "New"} ${editor.table === "tasks" ? "task" : "project"}`}
               </h2>
               <button
                 aria-label="Close details"
@@ -1753,103 +2003,393 @@ export default function Hub({
                 <X />
               </button>
             </div>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (await mutate(editor.table, editor.value, editor.id))
-                  setEditor(null);
-              }}
+            {editor.table === "tasks" &&
+              editor.id &&
+              tasks.find((t) => t.id === editor.id) && (
+                <TaskWorkbench
+                  key={editor.id}
+                  task={tasks.find((t) => t.id === editor.id)!}
+                  tasks={tasks}
+                  projects={projects}
+                  buckets={buckets}
+                  directory={{ teams, people }}
+                  onPatch={patchTask}
+                  onAction={workbench}
+                  onOpen={edit}
+                  onComplete={completeTask}
+                />
+              )}
+            <details
+              open={!editor.id || editor.table !== "tasks"}
+              className="advanced-details"
             >
-              {editor.table === "tasks" ? (
-                <>
-                  <Field
-                    name="Title"
-                    field="title"
-                    editor={editor}
-                    set={setEditor}
-                    required
-                  />
-                  <Field
-                    name="Description"
-                    field="description"
-                    editor={editor}
-                    set={setEditor}
-                    area
-                  />
-                  <div className="two-cols">
-                    <Select
-                      label="Status"
-                      field="status"
-                      choices={statuses}
+              <summary>
+                {editor.table === "tasks"
+                  ? "Task overview & advanced fields"
+                  : "Project fields"}
+              </summary>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (await mutate(editor.table, editor.value, editor.id))
+                    setEditor(null);
+                }}
+              >
+                {editor.table === "tasks" ? (
+                  <>
+                    <Field
+                      name="Title"
+                      field="title"
                       editor={editor}
                       set={setEditor}
+                      required
                     />
-                    <Select
-                      label="Priority"
-                      field="priority"
-                      choices={priorities}
+                    <Field
+                      name="Description"
+                      field="description"
                       editor={editor}
                       set={setEditor}
+                      area
                     />
-                  </div>
-                  <label>
-                    Project
-                    <select
-                      value={editor.value.project_id || ""}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          value: {
-                            ...editor.value,
-                            project_id: e.target.value || null,
-                          },
-                        })
-                      }
-                    >
-                      <option value="">No project</option>
-                      {projects.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <BucketPicker
-                    buckets={buckets}
-                    value={editor.value.bucket_id}
-                    onChange={(bucket_id) =>
-                      setEditor({
-                        ...editor,
-                        value: { ...editor.value, bucket_id },
-                      })
-                    }
-                    onCreate={createBucket}
-                  />
-                  <label>
-                    Parent task
-                    <select
-                      value={editor.value.parent_id || ""}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          value: {
-                            ...editor.value,
-                            parent_id: e.target.value || null,
-                          },
-                        })
-                      }
-                    >
-                      <option value="">No parent</option>
-                      {tasks
-                        .filter((t) => t.id !== editor.id && !t.archived)
-                        .map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.title}
+                    <div className="two-cols">
+                      <Select
+                        label="Status"
+                        field="status"
+                        choices={statuses}
+                        editor={editor}
+                        set={setEditor}
+                      />
+                      <Select
+                        label="Priority"
+                        field="priority"
+                        choices={priorities}
+                        editor={editor}
+                        set={setEditor}
+                      />
+                    </div>
+                    <label>
+                      Project
+                      <select
+                        value={editor.value.project_id || ""}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              project_id: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">No project</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
                           </option>
                         ))}
-                    </select>
-                  </label>
-                  <div className="two-cols">
+                      </select>
+                    </label>
+                    <BucketPicker
+                      buckets={buckets}
+                      value={editor.value.bucket_id}
+                      onChange={(bucket_id) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, bucket_id },
+                        })
+                      }
+                      onCreate={createBucket}
+                    />
+                    <label>
+                      Parent task
+                      <select
+                        value={editor.value.parent_id || ""}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              parent_id: e.target.value || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">No parent</option>
+                        {tasks
+                          .filter((t) => t.id !== editor.id && !t.archived)
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.title}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <div className="two-cols">
+                      <Field
+                        name="Start date"
+                        field="start_date"
+                        editor={editor}
+                        set={setEditor}
+                        type="date"
+                      />
+                      <Field
+                        name="Due date"
+                        field="due_date"
+                        editor={editor}
+                        set={setEditor}
+                        type="date"
+                      />
+                    </div>
+                    <Select
+                      label="Task type"
+                      field="task_type"
+                      choices={taskTypes}
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <PeoplePicker
+                      teams={teams}
+                      people={people}
+                      teamId={editor.value.team_id}
+                      personId={editor.value.person_id}
+                      onChange={(value) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, ...value },
+                        })
+                      }
+                    />
+                    <Select
+                      label="Classification"
+                      field="classification"
+                      choices={classifications}
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <label>
+                      Effort estimate
+                      <select
+                        value={editor.value.effort_minutes || ""}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              effort_minutes: Number(e.target.value) || null,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Not estimated</option>
+                        {efforts.map(([n, label]) => (
+                          <option value={n} key={n}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <Field
+                      name="Next action"
+                      field="next_action"
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <label>
+                      Assigned to
+                      <input
+                        list="assignee-names"
+                        value={editor.value.assigned_to}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              ...assignmentChange(editor.value, e.target.value),
+                              assigned_to: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="Type a name — no account needed"
+                      />
+                    </label>
+                    <datalist id="assignee-names">
+                      {Array.from(
+                        new Set(
+                          tasks.map((t) => t.assigned_to).filter(Boolean),
+                        ),
+                      )
+                        .sort()
+                        .map((name) => (
+                          <option key={name} value={name} />
+                        ))}
+                    </datalist>
+                    {(editor.value.assigned_to ||
+                      editor.value.task_type === "Delegated" ||
+                      editor.value.task_type === "Follow Up") && (
+                      <>
+                        <Field
+                          name="Date assigned"
+                          field="date_assigned"
+                          editor={editor}
+                          set={setEditor}
+                          type="date"
+                        />
+                        <Field
+                          name="Assignment notes"
+                          field="assignment_notes"
+                          editor={editor}
+                          set={setEditor}
+                          area
+                        />
+                        <Field
+                          name="Follow-up date"
+                          field="follow_up_date"
+                          editor={editor}
+                          set={setEditor}
+                          type="date"
+                        />
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() =>
+                            setEditor({
+                              ...editor,
+                              value: {
+                                ...editor.value,
+                                ...assignmentChange(editor.value, ""),
+                                task_type: "To Do",
+                                status: "To Do",
+                              },
+                            })
+                          }
+                        >
+                          Return to my workload
+                        </button>
+                      </>
+                    )}
+                    <SmartDate
+                      label="Snooze until"
+                      snooze
+                      value={editor.value.snoozed_until}
+                      onChange={(snoozed_until) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, snoozed_until },
+                        })
+                      }
+                    />
+                    {editor.value.project_id && (
+                      <label className="between">
+                        Project milestone
+                        <input
+                          type="checkbox"
+                          checked={editor.value.is_milestone}
+                          onChange={(e) =>
+                            setEditor({
+                              ...editor,
+                              value: {
+                                ...editor.value,
+                                is_milestone: e.target.checked,
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    )}
+                    <Field
+                      name="Person / organisation"
+                      field="person"
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <TagPicker
+                      value={editor.value.tags}
+                      tags={tags}
+                      onChange={(tags) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, tags },
+                        })
+                      }
+                    />
+                    <Field
+                      name="Notes"
+                      field="notes"
+                      editor={editor}
+                      set={setEditor}
+                      area
+                    />
+                    <label className="between">
+                      Archived
+                      <input
+                        type="checkbox"
+                        checked={editor.value.archived}
+                        onChange={(e) =>
+                          setEditor({
+                            ...editor,
+                            value: {
+                              ...editor.value,
+                              archived: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <Field
+                      name="Project name"
+                      field="name"
+                      editor={editor}
+                      set={setEditor}
+                      required
+                    />
+                    <Field
+                      name="Description"
+                      field="description"
+                      editor={editor}
+                      set={setEditor}
+                      area
+                    />
+                    <Field
+                      name="Next action"
+                      field="next_action"
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <TagPicker
+                      value={editor.value.tags}
+                      tags={tags}
+                      onChange={(tags) =>
+                        setEditor({
+                          ...editor,
+                          value: { ...editor.value, tags },
+                        })
+                      }
+                    />
+                    <Field
+                      name="Category"
+                      field="category"
+                      editor={editor}
+                      set={setEditor}
+                    />
+                    <div className="two-cols">
+                      <Select
+                        label="Status"
+                        field="status"
+                        choices={projectStatuses}
+                        editor={editor}
+                        set={setEditor}
+                      />
+                      <Select
+                        label="Priority"
+                        field="priority"
+                        choices={priorities}
+                        editor={editor}
+                        set={setEditor}
+                      />
+                    </div>
                     <Field
                       name="Start date"
                       field="start_date"
@@ -1858,348 +2398,80 @@ export default function Hub({
                       type="date"
                     />
                     <Field
-                      name="Due date"
-                      field="due_date"
+                      name="Target completion"
+                      field="target_date"
                       editor={editor}
                       set={setEditor}
                       type="date"
                     />
-                  </div>
-                  <Select
-                    label="Classification"
-                    field="classification"
-                    choices={classifications}
-                    editor={editor}
-                    set={setEditor}
-                  />
-                  <label>
-                    Effort estimate
-                    <select
-                      value={editor.value.effort_minutes || ""}
-                      onChange={(e) =>
+                    <Field
+                      name="Actual completion"
+                      field="actual_date"
+                      editor={editor}
+                      set={setEditor}
+                      type="date"
+                    />
+                    <Field
+                      name="Notes"
+                      field="notes"
+                      editor={editor}
+                      set={setEditor}
+                      area
+                    />
+                  </>
+                )}
+                {error && (
+                  <p role="alert" className="late">
+                    {error}
+                  </p>
+                )}
+                <div className="drawer-actions">
+                  <button className="primary" disabled={busy}>
+                    {busy ? "Saving…" : "Save changes"}
+                  </button>
+                  {editor.id && (
+                    <button
+                      type="button"
+                      className="danger"
+                      disabled={busy}
+                      onClick={async () => {
+                        if (
+                          confirm(
+                            "Permanently delete this " +
+                              (editor.table === "tasks" ? "task" : "project") +
+                              "? Records with linked tasks must be unlinked first.",
+                          ) &&
+                          (await mutate(editor.table, {}, editor.id, "delete"))
+                        )
+                          setEditor(null);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                  {editor.id && editor.table === "tasks" && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() =>
                         setEditor({
-                          ...editor,
+                          table: "tasks",
                           value: {
                             ...editor.value,
-                            effort_minutes: Number(e.target.value) || null,
+                            title: editor.value.title + " (copy)",
+                            status: "Inbox",
+                            parent_id: null,
+                            archived: false,
                           },
                         })
                       }
                     >
-                      <option value="">Not estimated</option>
-                      {efforts.map(([n, label]) => (
-                        <option value={n} key={n}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <Field
-                    name="Next action"
-                    field="next_action"
-                    editor={editor}
-                    set={setEditor}
-                  />
-                  <label>
-                    Assigned to
-                    <input
-                      list="assignee-names"
-                      value={editor.value.assigned_to}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          value: {
-                            ...editor.value,
-                            ...assignmentChange(editor.value, e.target.value),
-                            assigned_to: e.target.value,
-                          },
-                        })
-                      }
-                      placeholder="Type a name — no account needed"
-                    />
-                  </label>
-                  <datalist id="assignee-names">
-                    {Array.from(
-                      new Set(tasks.map((t) => t.assigned_to).filter(Boolean)),
-                    )
-                      .sort()
-                      .map((name) => (
-                        <option key={name} value={name} />
-                      ))}
-                  </datalist>
-                  {editor.value.assigned_to && (
-                    <>
-                      <Field
-                        name="Date assigned"
-                        field="date_assigned"
-                        editor={editor}
-                        set={setEditor}
-                        type="date"
-                      />
-                      <Field
-                        name="Assignment notes"
-                        field="assignment_notes"
-                        editor={editor}
-                        set={setEditor}
-                        area
-                      />
-                      <Field
-                        name="Follow-up date"
-                        field="follow_up_date"
-                        editor={editor}
-                        set={setEditor}
-                        type="date"
-                      />
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() =>
-                          setEditor({
-                            ...editor,
-                            value: {
-                              ...editor.value,
-                              ...assignmentChange(editor.value, ""),
-                              status: "To Do",
-                            },
-                          })
-                        }
-                      >
-                        Return to my workload
-                      </button>
-                    </>
+                      Duplicate
+                    </button>
                   )}
-                  <SmartDate
-                    label="Snooze until"
-                    snooze
-                    value={editor.value.snoozed_until}
-                    onChange={(snoozed_until) =>
-                      setEditor({
-                        ...editor,
-                        value: { ...editor.value, snoozed_until },
-                      })
-                    }
-                  />
-                  {editor.value.project_id && (
-                    <label className="between">
-                      Project milestone
-                      <input
-                        type="checkbox"
-                        checked={editor.value.is_milestone}
-                        onChange={(e) =>
-                          setEditor({
-                            ...editor,
-                            value: {
-                              ...editor.value,
-                              is_milestone: e.target.checked,
-                            },
-                          })
-                        }
-                      />
-                    </label>
-                  )}
-                  <Field
-                    name="Person / organisation"
-                    field="person"
-                    editor={editor}
-                    set={setEditor}
-                  />
-                  <TagPicker
-                    value={editor.value.tags}
-                    tags={tags}
-                    onChange={(tags) =>
-                      setEditor({ ...editor, value: { ...editor.value, tags } })
-                    }
-                  />
-                  <Field
-                    name="Notes"
-                    field="notes"
-                    editor={editor}
-                    set={setEditor}
-                    area
-                  />
-                  <label className="between">
-                    Archived
-                    <input
-                      type="checkbox"
-                      checked={editor.value.archived}
-                      onChange={(e) =>
-                        setEditor({
-                          ...editor,
-                          value: {
-                            ...editor.value,
-                            archived: e.target.checked,
-                          },
-                        })
-                      }
-                    />
-                  </label>
-                  {editor.id && (
-                    <>
-                      <h3>Subtasks</h3>
-                      {tasks
-                        .filter((t) => t.parent_id === editor.id)
-                        .map((t) => (
-                          <button
-                            className="subtask"
-                            key={t.id}
-                            type="button"
-                            onClick={() => edit(t)}
-                          >
-                            {t.title} · {t.status}
-                          </button>
-                        ))}
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() =>
-                          setEditor({
-                            table: "tasks",
-                            value: {
-                              ...emptyTask,
-                              status: "To Do",
-                              parent_id: editor.id,
-                              project_id: editor.value.project_id,
-                            },
-                          })
-                        }
-                      >
-                        Add subtask
-                      </button>
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <Field
-                    name="Project name"
-                    field="name"
-                    editor={editor}
-                    set={setEditor}
-                    required
-                  />
-                  <Field
-                    name="Description"
-                    field="description"
-                    editor={editor}
-                    set={setEditor}
-                    area
-                  />
-                  <Field
-                    name="Next action"
-                    field="next_action"
-                    editor={editor}
-                    set={setEditor}
-                  />
-                  <TagPicker
-                    value={editor.value.tags}
-                    tags={tags}
-                    onChange={(tags) =>
-                      setEditor({ ...editor, value: { ...editor.value, tags } })
-                    }
-                  />
-                  <Field
-                    name="Category"
-                    field="category"
-                    editor={editor}
-                    set={setEditor}
-                  />
-                  <div className="two-cols">
-                    <Select
-                      label="Status"
-                      field="status"
-                      choices={projectStatuses}
-                      editor={editor}
-                      set={setEditor}
-                    />
-                    <Select
-                      label="Priority"
-                      field="priority"
-                      choices={priorities}
-                      editor={editor}
-                      set={setEditor}
-                    />
-                  </div>
-                  <Field
-                    name="Start date"
-                    field="start_date"
-                    editor={editor}
-                    set={setEditor}
-                    type="date"
-                  />
-                  <Field
-                    name="Target completion"
-                    field="target_date"
-                    editor={editor}
-                    set={setEditor}
-                    type="date"
-                  />
-                  <Field
-                    name="Actual completion"
-                    field="actual_date"
-                    editor={editor}
-                    set={setEditor}
-                    type="date"
-                  />
-                  <Field
-                    name="Notes"
-                    field="notes"
-                    editor={editor}
-                    set={setEditor}
-                    area
-                  />
-                </>
-              )}
-              {error && (
-                <p role="alert" className="late">
-                  {error}
-                </p>
-              )}
-              <div className="drawer-actions">
-                <button className="primary" disabled={busy}>
-                  {busy ? "Saving…" : "Save changes"}
-                </button>
-                {editor.id && (
-                  <button
-                    type="button"
-                    className="danger"
-                    disabled={busy}
-                    onClick={async () => {
-                      if (
-                        confirm(
-                          "Permanently delete this " +
-                            (editor.table === "tasks" ? "task" : "project") +
-                            "? Records with linked tasks must be unlinked first.",
-                        ) &&
-                        (await mutate(editor.table, {}, editor.id, "delete"))
-                      )
-                        setEditor(null);
-                    }}
-                  >
-                    Delete
-                  </button>
-                )}
-                {editor.id && editor.table === "tasks" && (
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() =>
-                      setEditor({
-                        table: "tasks",
-                        value: {
-                          ...editor.value,
-                          title: editor.value.title + " (copy)",
-                          status: "Inbox",
-                          parent_id: null,
-                          archived: false,
-                        },
-                      })
-                    }
-                  >
-                    Duplicate
-                  </button>
-                )}
-              </div>
-            </form>
+                </div>
+              </form>
+            </details>
             {editor.id && (
               <>
                 <h3>Recent activity</h3>
@@ -2244,6 +2516,8 @@ const descriptions: Record<string, string> = {
   Downtime: "Useful work for when capacity becomes available.",
   Ongoing: "Continuing responsibilities, improvements and next actions.",
   Calendar: "Deadlines, milestones and follow-ups at a glance.",
+  "People & Teams":
+    "Things to discuss, follow up and delegate — all in one place.",
   "Completed / Archive": "A record of what you’ve achieved.",
   Settings: "Make this workspace yours.",
 };

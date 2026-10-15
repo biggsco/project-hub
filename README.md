@@ -4,13 +4,13 @@ A private personal project manager running entirely on Render: Next.js, React, T
 
 ## Status
 
-The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` and `004_core_simplicity.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
+The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql`, `003_buckets_tags.sql` `004_core_simplicity.sql` `005_people_productivity.sql` and `006_workbench.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
 
-Implemented: universal title-only Quick Add (Enter to save; Ctrl/Command+K or Q to focus), deterministic date/classification preview, date presets with optional custom calendar, Standard/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
+Implemented: universal title-only Quick Add (Enter to save; Q to focus; Ctrl/Command+K for commands), deterministic date/classification preview, date presets with optional custom calendar, Standard/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
 
 Authentication and Render configuration are retained: private owner account, Better Auth sessions, disabled public registration, origin checks and PostgreSQL row-level security. This change has not been deployed or verified against the live Render service.
 
-Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import/export, complete backup/restore, offline support and PWA installation. Settings export includes tasks, projects, buckets, tags and the latest 100 activity entries; it is not a complete database backup.
+Remaining outside this upgrade: recurrence, reminders/email delivery, general CSV import/export, complete backup/restore and full offline workspace access. Settings export includes tasks, projects, buckets, tags and the latest 100 activity entries; it is not a complete database backup.
 
 ## Capture and dates
 
@@ -29,7 +29,7 @@ Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import
 
 ## Phases 1 and 2 — Core simplicity and organisation
 
-These phases of the personal workspace brief are implemented. People & Teams, team/person associations, the new Discuss/Follow Up/Delegated types and Meeting View belong to Phase 3 and are not added here. Existing delegation and productivity features are retained.
+These phases of the personal workspace brief remain implemented; phases 3 and 4 extend them below.
 
 - Title + Enter creates an Inbox task with no deadline and no priority. Existing priorities are unchanged; `None` represents an unset priority on new tasks and is not shown as a badge.
 - Quick Add follows the current bucket, project, Downtime or Ongoing workspace. Bucket/project/work style/date/tag selections stay in place during consecutive entries within that context. Moving to a different view/bucket/project resets optional metadata to that context's defaults, while preserving the task draft and failed submissions.
@@ -41,7 +41,40 @@ These phases of the personal workspace brief are implemented. People & Teams, te
 - Escape closes optional date/bucket/tag menus. The global capture shortcut is retained, and Q does not intercept typing or focused interactive controls.
 - Phase 2 retains editable/reorderable/archiveable buckets, tag creation/autocomplete/rename/merge, grouped/flat Downtime, Ongoing work, bucket filtering, presets and deterministic parsing from the preceding upgrade.
 
-No new dependency or environment-variable changes are required. Migrations 001–003 are unchanged; the next additive migration is `004_core_simplicity.sql`.
+No new dependency or environment-variable changes are required. Migrations 001–004 are unchanged; the new additive migration is `005_people_productivity.sql`.
+
+## Phases 3 and 4 — People, conversations and getting started
+
+- People & Teams is a private directory, with editable/archiveable groups and people belonging to multiple groups. Starter groups are Technology Planning, Technology Systems, GM and Other People. No accounts, invitations or messages are created for contacts.
+- Tasks independently carry a team, associated person and task type: To Do, Discuss, Follow Up or Delegated. These do not replace status, classification, bucket or project. A separately tracked assignee preserves the original discussion person when an action is delegated to somebody else. Renaming an assignee updates assignment labels.
+- Team/person views prepare Quick Add for that context. Meeting View defaults new captures to Discuss and provides a persistent unresolved checklist with complete, convert to action, assign/reassign, follow-up and timestamped note actions. Completed items remain accessible in All associated tasks with the Completed status filter. Snoozed items leave the meeting checklist until they wake.
+- Known team aliases and exact known person wording can be recognised conservatively. Explicit `Follow Up -` or `Delegated -` relative dates become follow-up dates; ordinary `Follow up with IT next Friday` retains its existing deadline behaviour. Due dates remain independent. Quick Add previews recognised metadata.
+- What's Next uses deterministic priority, deadline, due-follow-up, next-action and recency rules. It excludes blocked, completed, archived, snoozed and future-starting work. Delegated tasks are suggested only as due follow-ups, never as work for you to perform. Time estimates are required when filtering to available time. Skip is remembered for the browser-tab session.
+- After seven days away, Welcome back appears with a bounded attention list, recent work and active projects. Hide from focus for a week removes an item from dashboard suggestions without deleting it or changing its deadline. Existing search/project access and snooze remain available.
+- Seven primary destinations keep navigation compact: Dashboard, Inbox, My Tasks, Projects, Downtime, People & Teams and Calendar. Ongoing, Waiting On, Completed/Archive and Settings remain under More views.
+- Existing effort, Quick Wins, available-time suggestions, Brain Dump, snooze and next actions are reused. No AI, new runtime dependencies or environment variables are added.
+
+Migration 005 adds owner-isolated teams, people and memberships, task links/types, dashboard focus dates and last-opened tracking. Existing assignments are backfilled into people; existing Waiting items become Follow Up. Titles, workflow status, classification, deadlines and existing records are retained. The existing Render pre-deploy migration command applies this change after merge.
+
+## Phase 5 — Personal Workbench (5A–5D)
+
+The existing task drawer now opens with Resume Work: last timestamped progress entry, prominent editable Next Action, outstanding subtask count and recent references. Overview and advanced fields remain in an expandable section. Progress history, existing free-form notes and task activity are retained separately. Use “Actually discussed” only to record an actual discussion; ordinary updates are never inferred to be conversations.
+
+- Add a progress line with Enter. Notes use server timestamps and stable retry IDs. Add/edit safe HTTP(S) references with titles. Subtasks support quick creation, inline title editing, completion and move-up/down ordering.
+- Develop with ChatGPT uses four local templates: Break into Steps, Explore the Idea, Build / Implement and Help Me Get Unstuck. Select individual context items, add constraints, regenerate, edit and copy. Changing exclusions disables Copy until the preview is regenerated. No prompt, URL or task data is automatically sent anywhere; no API key or AI service exists.
+- Paste Steps accepts numbered lists, Markdown checklists and JSON (`{"steps":["Step title"]}`). Preview/edit/deselect up to 100 steps. Imports append to the existing task, retain existing subtasks, deduplicate case/whitespace-equivalent titles and persist an idempotency receipt. Retrying cannot recreate imported/deleted steps or overwrite later edits. Titles are limited to 255 characters; pasted input to 60,000 characters.
+- Ctrl/Cmd+K opens Search & commands. Search tasks/projects/buckets/people/teams, navigate or select a recent task. Add task uses the same Quick Add submission logic and current context; typing then Enter captures immediately. Q still focuses Quick Add. Recents are scoped locally to the signed-in email.
+- `/capture` is an authenticated, minimal mobile route using the existing Quick Add. The PWA manifest provides install support, 192/512 PNG icons and a Quick Capture home-screen shortcut. Device keyboard dictation works without an API. Installation varies by browser; Safari users can use Add to Home Screen.
+- Typed drafts and unconfirmed captures are retained in this device's browser storage, scoped to the signed-in email. Reopen and use Retry save after reconnecting; original request IDs are retained, including after a lost response. This is recoverable capture, not automatic offline synchronisation. Browser storage must be available; optional metadata on an unsent text draft should be reviewed after reopening. Pending submissions preserve all selected metadata. Drafts may contain private information and remain on this device.
+- The service worker caches only a public offline notice. Authenticated pages, API responses and private task data are never cached by it. Opening the app while fully offline shows a reconnect notice; open capture drafts can survive a reload and be recovered once online.
+- Capture as Task, Idea or Note. Ideas/notes preserve date words, require no deadline or workflow choices, stay out of recommendations/workload counts and can be converted to Inbox tasks. They appear in Inbox and Ideas & Notes, and remain searchable.
+- Follow-up Radar groups overdue, due today, upcoming, explicitly flagged decisions and undated waiting work. Followed Up adds a dated progress entry and clears/reschedules only the follow-up date; underlying completion/deadline stay unchanged. Optional note/date, reschedule, snooze, complete and open actions are inline. The dashboard shows at most three requiring attention.
+- Last Time We Spoke is integrated into selected people/team views and uses explicit discussion entries, recorded completions, follow-ups, decision flags and unresolved discussion tasks. It does not invent summaries or historical meetings.
+- Weekly Reset is on demand: up to 12 deduplicated overdue/near-due/stale/follow-up/Inbox items plus three active projects. Keep priority, reschedule, snooze, complete, move to Downtime or mark reviewed. It does not automatically change dates or require Inbox Zero.
+- Achievements uses actual task completion dates and the most recent 500 project completion events. Filter by Adelaide date, project, bucket, team or task type; select items, copy plain/Markdown, export formula-safe CSV or prepare an editable ChatGPT summary prompt. Notes/progress are excluded. Reopened tasks are not counted as currently completed; project events are labelled recorded status changes, without invented outcomes. Rendering is paginated at 50 task rows.
+- Dashboard refinements reuse the existing recommendation engine: conversation shortcuts, Radar, recent Next Actions, Quick Wins/Downtime and a Deep Work time mode. Secondary functions remain under More views; seven primary navigation items are retained.
+
+Migration `006_workbench.sql` adds defaulted JSONB progress/reference arrays, subtask order, content type and decision flag to tasks, plus an owner-isolated step-import receipt table. Existing records default to Task and retain notes/status/dates/links. Migration 005 remains unchanged. Dedicated owner-locked actions append progress and modify references; stale task forms cannot overwrite these fields. No required environment variables or runtime dependencies are added. The existing Render pre-deploy command applies all unapplied numbered migrations.
 
 ## Buckets and shared tags
 
@@ -61,7 +94,7 @@ Starter buckets are Vectorworks (VWX), Momentus, MyAVM / SharePoint, Technology 
 - Brain Dump uses the same recognition/defaults. Preview rendering is capped at 200 entries before parsing/rendering, and oversized submissions are disabled. Retry IDs include the selected defaults, so a changed submission cannot accidentally reuse an old receipt. Successful retries clear prior error messages and return current task values.
 - Settings export now includes bucket/tag definitions along with task/project metadata. It remains a portability export, not a complete database backup.
 
-No environment-variable, Render plan, authentication or dependency changes are needed. Merge after checks pass; the existing pre-deploy command applies migrations 003 and 004. Live Render deployment and desktop/mobile visual verification are separate acceptance checks.
+No environment-variable, Render plan, authentication or dependency changes are needed. Merge after checks pass; the existing pre-deploy command applies any unapplied numbered migrations, including 005. Live Render deployment and desktop/mobile visual verification are separate acceptance checks.
 
 ## GitHub updates
 

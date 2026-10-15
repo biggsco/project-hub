@@ -7,6 +7,8 @@ import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
 import { organise, organisationRecords } from "../lib/organisation-records";
+import { workbenchAction } from "../lib/workbench-records";
+import { saveContact, peopleRecords, recordVisit } from "../lib/people-records";
 import { provision } from "../lib/provision";
 import { writeRecord, loadRecords, captureTasks } from "../lib/records";
 test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", async () => {
@@ -73,7 +75,7 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     ).rows.length,
     2,
   );
-  assert.equal((await organisationRecords(c)).buckets.length, 5);
+  assert.equal((await c.query("select * from buckets")).rows.length, 5);
 
   await pg.client.exec(
     await readFile("db/migrations/004_core_simplicity.sql", "utf8"),
@@ -90,6 +92,31 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   );
   assert.equal(simplified.status, "Waiting");
   assert.equal(simplified.title, "Existing task");
+  // Upgrade an existing manual delegation without requiring a colleague account.
+  const oldDelegation = (
+    await c.query(
+      "insert into tasks(user_id,title,assigned_to,status) values($1,'Existing delegation',' Existing Colleague ','Waiting') returning *",
+      [owner],
+    )
+  ).rows[0];
+  await pg.client.exec(
+    await readFile("db/migrations/005_people_productivity.sql", "utf8"),
+  );
+  await pg.client.exec(
+    await readFile("db/migrations/006_workbench.sql", "utf8"),
+  );
+  const migrated = (
+    await c.query("select * from tasks where id=$1", [oldDelegation.id])
+  ).rows[0];
+  assert.equal(migrated.status, "Waiting");
+  assert.equal(migrated.task_type, "Delegated");
+  assert.ok(migrated.person_id);
+  assert.equal(
+    (await c.query("select name from people where id=$1", [migrated.person_id]))
+      .rows[0].name,
+    "Existing Colleague",
+  );
+  await c.query("delete from tasks where id=$1", [oldDelegation.id]);
   const oldClient = (
     await c.query(
       "insert into tasks(user_id,title,classification) values($1,'Previous deployment','Inbox') returning *",
@@ -469,6 +496,7 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     {
       ...reassign,
       assigned_to: "",
+      task_type: "To Do",
       date_assigned: null,
       follow_up_date: null,
       status: "To Do",
@@ -757,6 +785,264 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
         null,
       ),
     /Bucket unavailable/,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const directory = await peopleRecords(c);
+  assert.equal(directory.teams.length, 4);
+  const team = await saveContact(c, owner, {
+    action: "team_save",
+    value: { name: "Venue Planning", aliases: ["Venue"] },
+  });
+  const person = await saveContact(c, owner, {
+    action: "person_save",
+    value: { name: "Alex Manager", team_ids: [team.id, directory.teams[0].id] },
+  });
+  assert.equal(
+    (await peopleRecords(c)).people.find((p) => p.id === person.id)?.team_ids
+      .length,
+    2,
+  );
+  const discussion = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Discuss venue plan",
+      task_type: "Discuss",
+      person_id: person.id,
+      team_id: team.id,
+      classification: "Downtime",
+      due_date: "2026-12-01",
+    },
+    null,
+  );
+  const contactDelegated = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...discussion,
+      assigned_to: "  Sam   Planner ",
+      follow_up_date: "2026-11-01",
+      notes: "Decision recorded",
+    },
+    discussion.id,
+  );
+  assert.equal(
+    contactDelegated.person_id,
+    person.id,
+    "delegation retains associated discussion person",
+  );
+  assert.notEqual(contactDelegated.assigned_person_id, person.id);
+  assert.equal(contactDelegated.assigned_to, "Sam Planner");
+  assert.equal(contactDelegated.status, discussion.status);
+  assert.equal(contactDelegated.task_type, "Delegated");
+  assert.equal(contactDelegated.due_date, "2026-12-01");
+  const assignee = (await peopleRecords(c)).people.find(
+    (p) => p.id === contactDelegated.assigned_person_id,
+  )!;
+  await saveContact(c, owner, {
+    action: "person_save",
+    id: assignee.id,
+    value: { ...assignee, name: "Sam Updated" },
+  });
+  assert.equal(
+    (await loadRecords(c)).tasks.find((t) => t.id === discussion.id)
+      ?.assigned_to,
+    "Sam Updated",
+  );
+  const contactReturned = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...contactDelegated,
+      assigned_to: "",
+      task_type: "To Do",
+      focus_dismissed_until: "2026-11-02",
+      snoozed_until: "2026-10-30",
+    },
+    discussion.id,
+  );
+  assert.equal(contactReturned.assigned_person_id, null);
+  assert.equal(contactReturned.person_id, person.id);
+  assert.equal(contactReturned.classification, "Downtime");
+  assert.equal(contactReturned.due_date, "2026-12-01");
+  assert.equal(contactReturned.notes, "Decision recorded");
+  await saveContact(c, owner, {
+    action: "team_save",
+    id: team.id,
+    value: { ...team, archived: true },
+  });
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...contactReturned, notes: "Archived team retains existing work" },
+    discussion.id,
+  );
+  await assert.rejects(
+    () =>
+      writeRecord(
+        c,
+        owner,
+        "tasks",
+        "save",
+        { title: "New archived association", team_id: team.id },
+        null,
+      ),
+    /Contact unavailable/,
+  );
+  const visit = await recordVisit(c, owner);
+  assert.equal(visit.previous, null);
+  assert.ok((await recordVisit(c, owner)).previous);
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  assert.equal(
+    (await c.query("select * from people where id=$1", [person.id])).rows
+      .length,
+    0,
+  );
+  assert.equal(
+    (await c.query("select * from teams where id=$1", [team.id])).rows.length,
+    0,
+  );
+  await assert.rejects(
+    () =>
+      saveContact(c, other, {
+        action: "person_save",
+        id: person.id,
+        value: { name: "Intruder" },
+      }),
+    /Person unavailable/,
+  );
+  await assert.rejects(
+    () =>
+      writeRecord(
+        c,
+        other,
+        "tasks",
+        "save",
+        { title: "Cross-owner contact", person_id: person.id },
+        null,
+      ),
+    /Contact unavailable/,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const progressId = crypto.randomUUID();
+  const progressInput = {
+    action: "progress_add",
+    task_id: discussion.id,
+    text: "Schema investigated",
+    request_id: progressId,
+  };
+  await workbenchAction(c, owner, progressInput);
+  await workbenchAction(c, owner, progressInput);
+  let workTask = (await loadRecords(c)).tasks.find(
+    (t) => t.id === discussion.id,
+  )!;
+  assert.equal(
+    workTask.progress_entries.length,
+    1,
+    "retried progress is added once",
+  );
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...discussion, description: "Stale form updated" },
+    discussion.id,
+  );
+  workTask = (await loadRecords(c)).tasks.find((t) => t.id === discussion.id)!;
+  assert.equal(
+    workTask.progress_entries.length,
+    1,
+    "stale forms cannot replace progress history",
+  );
+  const link = {
+    action: "reference_save",
+    task_id: discussion.id,
+    reference_id: crypto.randomUUID(),
+    title: "Reference",
+    url: "https://example.test/docs",
+  };
+  await workbenchAction(c, owner, link);
+  await assert.rejects(() =>
+    workbenchAction(c, owner, { ...link, url: "javascript:alert(1)" }),
+  );
+  const stepsInput = {
+    action: "steps_import",
+    task_id: discussion.id,
+    request_id: crypto.randomUUID(),
+    titles: ["Inspect schema", "Build prototype", "Inspect schema"],
+  };
+  // Existing team is archived: remove it from parent before adding new associations.
+  await c.query("update tasks set team_id=null where id=$1", [discussion.id]);
+  const imported = await workbenchAction(c, owner, stepsInput);
+  assert.equal(imported.records!.length, 2);
+  assert.equal((await workbenchAction(c, owner, stepsInput)).records!.length, 2);
+  const repeated = await workbenchAction(c, owner, {
+    ...stepsInput,
+    request_id: crypto.randomUUID(),
+  });
+  assert.equal(repeated.records!.length, 0);
+  await assert.rejects(
+    () => workbenchAction(c, owner, { ...stepsInput, titles: ["Changed"] }),
+    /already used/,
+  );
+  await workbenchAction(c, owner, {
+    action: "subtasks_reorder",
+    task_id: discussion.id,
+    ids: imported.records!.map((t: any) => t.id).reverse(),
+  });
+  const importedOrder = (
+    await c.query(
+      "select title from tasks where parent_id=$1 order by subtask_position",
+      [discussion.id],
+    )
+  ).rows;
+  assert.deepEqual(
+    importedOrder.map((t) => t.title),
+    ["Build prototype", "Inspect schema"],
+  );
+  const chase = await workbenchAction(c, owner, {
+    action: "followed_up",
+    task_id: discussion.id,
+    request_id: crypto.randomUUID(),
+    text: "Asked for update",
+    follow_up_date: "2026-12-10",
+  });
+  assert.equal(chase.record.status, discussion.status);
+  assert.equal(new Date(chase.record.due_date).toISOString().slice(0,10), "2026-12-01");
+  assert.equal(chase.record.progress_entries.at(-1).kind, "follow_up");
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  await assert.rejects(
+    () => workbenchAction(c, other, progressInput),
+    /Task unavailable/,
+  );
+  assert.equal(
+    (
+      await c.query("select * from step_imports where request_id=$1", [
+        stepsInput.request_id,
+      ])
+    ).rows.length,
+    0,
   );
   await pg.client.exec("COMMIT");
   await db.destroy();

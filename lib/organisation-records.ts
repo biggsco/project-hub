@@ -1,10 +1,15 @@
+import { peopleRecords } from "./people-records";
 import { z } from "zod";
 import { bucketSchema, cleanName } from "./organisation";
 import type { QueryClient } from "./records";
 export async function organisationRecords(c: QueryClient) {
   const buckets = await c.query("select * from buckets order by position,name");
   const tags = await c.query("select id,name from tags order by name_key");
-  return { buckets: buckets.rows, tags: tags.rows };
+  return {
+    buckets: buckets.rows,
+    tags: tags.rows,
+    ...(await peopleRecords(c)),
+  };
 }
 export async function organise(c: QueryClient, userId: string, input: unknown) {
   const b = z
