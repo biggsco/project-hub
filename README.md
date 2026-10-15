@@ -4,13 +4,13 @@ A private personal project manager running entirely on Render: Next.js, React, T
 
 ## Status
 
-The frictionless task upgrade is implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql` migration. No new runtime dependencies, AI services or subscriptions are introduced.
+The frictionless capture, bucket and shared-tag upgrades are implemented on the existing Next.js, PostgreSQL and Better Auth application. Existing tasks and projects are preserved by the additive `002_frictionless.sql` and `003_buckets_tags.sql` migrations. No new runtime dependencies, AI services or subscriptions are introduced.
 
 Implemented: universal title-only Quick Add (Enter to save; Ctrl/Command+K or Q to focus), deterministic date/classification preview, date presets with optional custom calendar, Inbox/Downtime/Ongoing classifications independent of status, manual delegation and follow-ups, effort estimates, Quick Wins, “I've got some time”, Brain Dump, snooze, next actions, project milestones, calendar, subtasks, notes/activity, completion/reopening, inline status/deadline editing, list/Kanban, archive, search, filters, project progress, dark appearance and responsive CSS.
 
 Authentication and Render configuration are retained: private owner account, Better Auth sessions, disabled public registration, origin checks and PostgreSQL row-level security. This change has not been deployed or verified against the live Render service.
 
-Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import/export, complete backup/restore, offline support and PWA installation. Settings export includes tasks, projects and the latest 100 activity entries; it is not a complete database backup.
+Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import/export, complete backup/restore, offline support and PWA installation. Settings export includes tasks, projects, buckets, tags and the latest 100 activity entries; it is not a complete database backup.
 
 ## Capture and dates
 
@@ -26,6 +26,26 @@ Remaining outside this upgrade: recurrence, reminders/email delivery, CSV import
 - Effort presets are 15/30/60/120 minutes, half day (240 minutes), or multi-day (960 minutes, used only as a broad estimate). “I've got some time” prioritises Downtime and excludes completed, archived, waiting, blocked, delegated, future-starting, Someday and snoozed work. Unestimated tasks are not guessed to fit.
 - Project target dates, milestones and follow-up dates use the same preset date control. Milestones are project tasks with an explicit marker, retaining the existing task workflow.
 - Notes are editable in task details and note changes are recorded in activity. Both Ongoing tasks and projects have a Next action field; task subtasks remain available.
+
+## Buckets and shared tags
+
+Migration `003_buckets_tags.sql` adds reusable owner-isolated buckets, a tag library, task-tag and project-tag relationships, and a nullable bucket relationship on tasks. Tasks can belong to a project and bucket simultaneously. Existing records are preserved. Existing tags are backfilled, consolidating case/whitespace duplicates while retaining their task associations. The existing tags arrays remain compatible, synchronised by database triggers with the relational links.
+
+Starter buckets are Vectorworks (VWX), Momentus, MyAVM / SharePoint, Technology Systems and Other Ideas. Starter tags are Automation, Research, Improvement, Bug, Documentation, Quick Win and Delegatable. These are database records, fully editable rather than fixed application categories. The migration seeds existing owners; a database trigger seeds newly provisioned owners.
+
+- In Downtime, select All Downtime, a bucket, Uncategorised, Available to Delegate or Quick Wins. Switch between grouped and flat lists; priority, effort, tags, assignment and status filters apply across groups. Counts show incomplete tasks, including snoozed items; Show snoozed controls their visibility.
+- Manage buckets & tags is available inline in Downtime and Settings. Create/rename/reorder/archive/restore buckets, edit descriptions/aliases, and rename or merge tags. Archiving retains memberships and shows archived groups that still contain work; archived buckets cannot receive new assignments.
+- Quick Add has optional bucket chips/selector, classification, date and tags. Bucket selection stays selected across consecutive entries. Opening a bucket prepares Quick Add for that bucket; the default classification is Downtime in the Downtime area, Inbox elsewhere. Explicitly selected classification is retained.
+- Bucket chips prioritise recently used buckets, stored locally per browser. The native selector supports keyboard navigation and creating a bucket inline. You can also create buckets from task details.
+- Known bucket names/aliases can be prefixes: `VWX - investigate coordinates` or `Momentus - inspect webhooks in 2 weeks`. Combine class and bucket prefixes in either order: `Downtime - VWX - tidy symbols`. Only an unambiguous known prefix is removed.
+- A single unambiguous bucket mention also selects that bucket without removing title words: `Update MyAVM documentation #documentation #improvement` retains `Update MyAVM documentation` as its title. Unknown or ambiguous bucket wording remains unchanged. Archived buckets are ignored by recognition.
+- Supported metadata in the title overrides the corresponding optional Quick Add defaults; choosing a bucket alone never changes classification. Preview shows the effective bucket, classification, tags and date.
+- Type a tag in the autocomplete field and press Enter or Add. A new tag becomes reusable when the task/project is saved. Hashtags also create/select tags; case/whitespace duplicates are prevented. Known multiword tags accept hyphen/underscore forms, e.g. `#quick-win` selects Quick Win.
+- Tasks and projects share the same tag library. Renaming or merging updates both the relational links and compatibility arrays in one transaction. Project list has a tag filter; task filters and search include tags.
+- Brain Dump uses the same recognition/defaults. Preview rendering is capped at 200 entries before parsing/rendering, and oversized submissions are disabled. Retry IDs include the selected defaults, so a changed submission cannot accidentally reuse an old receipt. Successful retries clear prior error messages and return current task values.
+- Settings export now includes bucket/tag definitions along with task/project metadata. It remains a portability export, not a complete database backup.
+
+No environment-variable, Render plan, authentication or dependency changes are needed. Merge after checks pass; the existing pre-deploy command applies migration 003. Live Render deployment and desktop/mobile visual verification are separate acceptance checks.
 
 ## GitHub updates
 

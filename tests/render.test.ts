@@ -6,6 +6,7 @@ import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
+import { organise, organisationRecords } from "../lib/organisation-records";
 import { provision } from "../lib/provision";
 import { writeRecord, loadRecords, captureTasks } from "../lib/records";
 test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", async () => {
@@ -49,6 +50,13 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   await pg.client.exec(
     await readFile("db/migrations/002_frictionless.sql", "utf8"),
   );
+  await c.query(
+    "update tasks set tags=array[' automation ','AUTOMATION','Old Tag'] where id=$1",
+    [legacy.rows[0].id],
+  );
+  await pg.client.exec(
+    await readFile("db/migrations/003_buckets_tags.sql", "utf8"),
+  );
   const preserved = await c.query("select * from tasks where id=$1", [
     legacy.rows[0].id,
   ]);
@@ -56,6 +64,17 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
   assert.equal(preserved.rows[0].person, "Legacy contact");
   assert.equal(preserved.rows[0].status, "Waiting");
   assert.equal(preserved.rows[0].classification, "Inbox");
+  assert.deepEqual(preserved.rows[0].tags, ["automation", "Old Tag"]);
+  assert.equal(
+    (
+      await c.query("select * from task_tags where task_id=$1", [
+        legacy.rows[0].id,
+      ])
+    ).rows.length,
+    2,
+  );
+  assert.equal((await organisationRecords(c)).buckets.length, 5);
+
   await c.query("delete from tasks where id=$1", [legacy.rows[0].id]);
   const auth = betterAuth(options);
   const signup = await auth.handler(
@@ -439,6 +458,241 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     (await c.query("select * from tasks where assigned_to='Edward'")).rows
       .length,
     0,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const library = await organisationRecords(c);
+  const vwx = library.buckets.find((b) => b.name === "Vectorworks (VWX)");
+  const custom = await organise(c, owner, {
+    action: "bucket_save",
+    value: {
+      name: "  Venue  Planning ",
+      description: "Useful layout improvements",
+      aliases: ["Planning"],
+    },
+  });
+  assert.equal(custom.name, "Venue Planning");
+  const initial = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Both project and bucket",
+      project_id: project.id,
+      bucket_id: custom.id,
+      classification: "Downtime",
+      status: "To Do",
+      tags: [" Research ", "research", "Custom  Tag"],
+    },
+    null,
+  );
+  assert.equal(initial.project_id, project.id);
+  assert.equal(initial.bucket_id, custom.id);
+  assert.equal(initial.classification, "Downtime");
+  assert.equal(initial.tags.length, 2);
+  assert.equal(
+    (await c.query("select * from task_tags where task_id=$1", [initial.id]))
+      .rows.length,
+    2,
+  );
+  const tagLibrary = await organisationRecords(c);
+  const customTag = tagLibrary.tags.find((t) => t.name === "Custom Tag");
+  const duplicate = await organise(c, owner, {
+    action: "tag_save",
+    value: { name: " custom   tag " },
+  });
+  assert.equal(
+    duplicate.id,
+    customTag.id,
+    "case and whitespace do not create a second library tag",
+  );
+  const taggedProject = await writeRecord(
+    c,
+    owner,
+    "projects",
+    "save",
+    { ...project, tags: [customTag.name, "Research"] },
+    project.id,
+  );
+  assert.equal(taggedProject.tags.length, 2);
+  await organise(c, owner, {
+    action: "tag_save",
+    id: customTag.id,
+    value: { name: "Renamed tag" },
+  });
+  let current = await loadRecords(c);
+  assert.ok(
+    current.tasks
+      .find((t) => t.id === initial.id)
+      ?.tags.includes("Renamed tag"),
+  );
+  assert.ok(
+    current.projects
+      .find((p) => p.id === project.id)
+      ?.tags.includes("Renamed tag"),
+  );
+  const research = current.tags.find(
+    (t) => t.name.toLowerCase() === "research",
+  );
+  await organise(c, owner, {
+    action: "tag_save",
+    id: customTag.id,
+    merge_to: research.id,
+  });
+  current = await loadRecords(c);
+  assert.deepEqual(current.tasks.find((t) => t.id === initial.id)?.tags, [
+    research.name,
+  ]);
+  assert.deepEqual(current.projects.find((p) => p.id === project.id)?.tags, [
+    research.name,
+  ]);
+  assert.equal(
+    (await c.query("select * from task_tags where task_id=$1", [initial.id]))
+      .rows.length,
+    1,
+  );
+  assert.ok(!current.tags.some((t) => t.id === customTag.id));
+  const updated = await organise(c, owner, {
+    action: "bucket_save",
+    id: custom.id,
+    value: { ...custom, name: "Venue Improvements", aliases: ["Venue"] },
+  });
+  assert.equal(updated.id, custom.id);
+  const order = current.buckets
+    .filter((b) => !b.archived)
+    .map((b) => b.id)
+    .reverse();
+  await organise(c, owner, { action: "bucket_reorder", ids: order });
+  assert.deepEqual(
+    (await organisationRecords(c)).buckets.map((b) => b.id),
+    order,
+  );
+  const captureWithMetadata = {
+    request_id: crypto.randomUUID(),
+    lines: [
+      "VWX - improve symbols #research",
+      "Update MyAVM documentation #documentation",
+    ],
+    defaults: {
+      classification: "Downtime",
+      bucket_id: custom.id,
+      tags: ["Automation"],
+    },
+  };
+  const batch = await captureTasks(
+    c,
+    owner,
+    captureWithMetadata,
+    new Date("2026-10-15T01:00:00Z"),
+  );
+  assert.equal(batch[0].bucket_id, vwx.id);
+  assert.equal(batch[0].classification, "Downtime");
+  assert.ok(batch[0].tags.includes(research.name));
+  assert.equal(batch[1].title, "Update MyAVM documentation");
+  assert.notEqual(batch[1].bucket_id, custom.id);
+  assert.deepEqual(
+    (await captureTasks(c, owner, captureWithMetadata)).map((t) => t.id),
+    batch.map((t) => t.id),
+  );
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...batch[0], notes: "Updated after initial capture" },
+    batch[0].id,
+  );
+  assert.equal(
+    (await captureTasks(c, owner, captureWithMetadata))[0].notes,
+    "Updated after initial capture",
+  );
+  await assert.rejects(
+    () =>
+      captureTasks(c, owner, {
+        ...captureWithMetadata,
+        defaults: { classification: "Inbox" },
+      }),
+    /already used/,
+  );
+  await organise(c, owner, {
+    action: "bucket_save",
+    id: custom.id,
+    value: { ...updated, archived: true },
+  });
+  const afterArchive = await loadRecords(c);
+  assert.equal(
+    afterArchive.tasks.find((t) => t.id === initial.id)?.bucket_id,
+    custom.id,
+    "archiving preserves task membership",
+  );
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      ...afterArchive.tasks.find((t) => t.id === initial.id),
+      status: "Completed",
+    },
+    initial.id,
+  );
+  await assert.rejects(
+    () =>
+      writeRecord(
+        c,
+        owner,
+        "tasks",
+        "save",
+        { title: "New archived bucket task", bucket_id: custom.id },
+        null,
+      ),
+    /Bucket unavailable/,
+  );
+  await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    { ...initial, bucket_id: vwx.id },
+    initial.id,
+  );
+  assert.equal(
+    (await loadRecords(c)).tasks.filter((t) => t.id === initial.id).length,
+    1,
+    "moving never duplicates the task",
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  assert.equal(
+    (await c.query("select * from buckets where id=$1", [custom.id])).rows
+      .length,
+    0,
+  );
+  await assert.rejects(
+    () =>
+      organise(c, other, {
+        action: "tag_save",
+        id: research.id,
+        value: { name: "Intruder rename" },
+      }),
+    /Tag unavailable/,
+  );
+  await assert.rejects(
+    () =>
+      writeRecord(
+        c,
+        other,
+        "tasks",
+        "save",
+        { title: "Cross-owner bucket", bucket_id: vwx.id },
+        null,
+      ),
+    /Bucket unavailable/,
   );
   await pg.client.exec("COMMIT");
   await db.destroy();

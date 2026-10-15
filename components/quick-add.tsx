@@ -1,12 +1,30 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { parseCapture, previewBulk } from "@/lib/capture";
-import type { Task } from "@/lib/model";
-type Submission = { request_id: string; lines: string[] };
+import { parseTaskInput, boundedPreview } from "@/lib/capture";
+import { today, type Task, type CaptureDefaults } from "@/lib/model";
+import { type Bucket, type Tag } from "@/lib/organisation";
+import BucketPicker from "./bucket-picker";
+import TagPicker from "./tag-picker";
+import SmartDate from "./smart-date";
+type Submission = {
+  request_id: string;
+  lines: string[];
+  defaults: CaptureDefaults;
+};
 export default function QuickAdd({
   onCreated,
+  buckets,
+  tags,
+  onCreateBucket,
+  contextBucket,
+  downtime = false,
 }: {
-  onCreated: (records: Task[]) => void;
+  buckets: Bucket[];
+  tags: Tag[];
+  onCreateBucket: (name: string) => Promise<Bucket | null>;
+  contextBucket?: string | null;
+  downtime?: boolean;
+  onCreated: (records: Task[], tags: Tag[]) => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const bulkLock = useRef(false);
@@ -19,8 +37,47 @@ export default function QuickAdd({
   const [saving, setSaving] = useState(0);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const parsed = parseCapture(text);
-  const preview = previewBulk(dump);
+  const [bucketId, setBucketId] = useState<string | null>(null);
+  const [classification, setClassification] = useState("");
+  const [dueDate, setDueDate] = useState<string | null>(null);
+  const [someday, setSomeday] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [recent, setRecent] = useState<string[]>([]);
+  const defaults: CaptureDefaults = {
+    bucket_id: bucketId,
+    classification: (classification ||
+      (downtime ? "Downtime" : "Inbox")) as Task["classification"],
+    due_date: dueDate,
+    tags: selectedTags,
+    date_preferences: someday ? { due_date: "Someday" } : {},
+  };
+  const parsed = parseTaskInput(text, buckets, tags, today(), defaults);
+  const { count: previewCount, items: preview } = boundedPreview(
+    dump,
+    buckets,
+    tags,
+    today(),
+    defaults,
+  );
+  useEffect(() => {
+    try {
+      setRecent(
+        JSON.parse(localStorage.getItem("hub-recent-buckets") || "[]")
+          .filter((x: unknown) => typeof x === "string")
+          .slice(0, 10),
+      );
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (contextBucket !== undefined) setBucketId(contextBucket);
+  }, [contextBucket]);
+  useEffect(() => {
+    if (bucketId && buckets.find((b) => b.id === bucketId)?.archived)
+      setBucketId(null);
+  }, [buckets, bucketId]);
+  useEffect(() => {
+    setReceipt(null);
+  }, [bucketId, classification, dueDate, someday, selectedTags, downtime]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       const editing = (e.target as HTMLElement).matches(
@@ -54,7 +111,18 @@ export default function QuickAdd({
       });
       const b = await r.json();
       if (!r.ok) throw Error(b.error || "Unable to capture tasks.");
-      onCreated(b.records);
+      onCreated(b.records, b.tags || []);
+      setError("");
+      const used = b.records
+        .map((t: Task) => t.bucket_id)
+        .filter(Boolean) as string[];
+      setRecent((previous) => {
+        const next = [...new Set([...used, ...previous])].slice(0, 10);
+        try {
+          localStorage.setItem("hub-recent-buckets", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
       setFailed((items) =>
         items.filter((item) => item.request_id !== submission.request_id),
       );
@@ -79,6 +147,7 @@ export default function QuickAdd({
           const submission = {
             request_id: crypto.randomUUID(),
             lines: [text.trim()],
+            defaults,
           };
           setText("");
           setError("");
@@ -104,10 +173,51 @@ export default function QuickAdd({
           Add task
         </button>
       </form>
+      <div className="capture-controls">
+        <BucketPicker
+          compact
+          buckets={buckets}
+          value={bucketId}
+          onChange={setBucketId}
+          onCreate={onCreateBucket}
+          recent={recent}
+        />
+        <div className="compact">
+          <span className="field-label">Classification</span>
+          <select
+            aria-label="Quick Add classification"
+            value={classification}
+            onChange={(e) => setClassification(e.target.value)}
+          >
+            <option value="">
+              {downtime ? "Downtime (this view)" : "Inbox (default)"}
+            </option>
+            {["Inbox", "Downtime", "Ongoing"].map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+        <SmartDate
+          label="Quick Add due date"
+          value={dueDate}
+          someday={someday}
+          onChange={(date, some) => {
+            setDueDate(date);
+            setSomeday(!!some);
+          }}
+          natural
+        />
+        <TagPicker
+          compact
+          value={selectedTags}
+          tags={tags}
+          onChange={setSelectedTags}
+        />
+      </div>
       <div className="capture-hint">
         <span>
           {text.trim()
-            ? `${parsed.classification}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}`
+            ? `${parsed.classification}${parsed.bucket_id ? " · " + buckets.find((b) => b.id === parsed.bucket_id)?.name : ""}${parsed.due_date ? " · Due " + parsed.due_date : " · No deadline"}${parsed.tags.length ? " · " + parsed.tags.join(", ") : ""}`
             : "Capture first, organise later. Focus with Ctrl / ⌘ K or Q."}
         </span>
         <button
@@ -162,15 +272,18 @@ export default function QuickAdd({
             />
           </label>
           <p className="muted">
-            {preview.length} tasks · Dates use Australia/Adelaide. Specific
-            dates: DD/MM/YYYY or YYYY-MM-DD.
+            {previewCount} tasks · Dates use Australia/Adelaide. Specific dates:
+            DD/MM/YYYY or YYYY-MM-DD.
           </p>
           <div className="capture-preview">
             {preview.map((p, i) => (
               <div key={i}>
                 <strong>{p.title}</strong>
                 <small>
-                  {p.classification} · {p.due_date || "No deadline"}
+                  {p.classification} ·{" "}
+                  {buckets.find((b) => b.id === p.bucket_id)?.name ||
+                    "No bucket"}{" "}
+                  · {p.due_date || "No deadline"} {p.tags.join(", ")}
                 </small>
               </div>
             ))}
@@ -180,7 +293,7 @@ export default function QuickAdd({
             disabled={
               bulkBusy ||
               !preview.length ||
-              preview.length > 200 ||
+              previewCount > 200 ||
               preview.some((p) => !p.title || p.title.length > 255)
             }
             onClick={async () => {
@@ -189,6 +302,7 @@ export default function QuickAdd({
               setBulkBusy(true);
               setError("");
               const submission = receipt || {
+                defaults,
                 request_id: crypto.randomUUID(),
                 lines: dump
                   .split(/\r?\n/)
@@ -206,9 +320,9 @@ export default function QuickAdd({
               setBulkBusy(false);
             }}
           >
-            {bulkBusy ? "Creating…" : `Create ${preview.length} tasks`}
+            {bulkBusy ? "Creating…" : `Create ${previewCount} tasks`}
           </button>
-          {preview.length > 200 && (
+          {previewCount > 200 && (
             <p role="alert">Paste up to 200 tasks at a time.</p>
           )}
         </div>

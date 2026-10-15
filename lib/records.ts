@@ -1,6 +1,13 @@
-import { taskSchema, projectSchema, today, type Task } from "./model";
-import { parseCapture } from "./capture";
+import {
+  taskSchema,
+  projectSchema,
+  today,
+  type Task,
+  captureDefaultsSchema,
+} from "./model";
+import { parseTaskInput } from "./capture";
 import { z } from "zod";
+import { organisationRecords } from "./organisation-records";
 function normalise(row: Record<string, any>) {
   for (const k of [
     "start_date",
@@ -32,6 +39,7 @@ export async function loadRecords(c: QueryClient) {
     tasks: tasks.rows.map(normalise),
     projects: projects.rows.map(normalise),
     activity: activity.rows,
+    ...(await organisationRecords(c)),
   };
 }
 export async function writeRecord(
@@ -42,6 +50,9 @@ export async function writeRecord(
   value: unknown,
   id: string | null,
 ) {
+  await c.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
+    userId,
+  ]);
   let result;
   if (action === "delete") {
     if (!id) throw Error("Missing record");
@@ -53,6 +64,27 @@ export async function writeRecord(
     const parsed = (table === "tasks" ? taskSchema : projectSchema).parse(
       value,
     );
+    if (table === "tasks" && "bucket_id" in parsed && parsed.bucket_id) {
+      const bucket = (
+        await c.query(
+          "select archived from buckets where id=$1 and user_id=$2",
+          [parsed.bucket_id, userId],
+        )
+      ).rows[0];
+      const previous = id
+        ? (
+            await c.query(
+              "select bucket_id from tasks where id=$1 and user_id=$2",
+              [id, userId],
+            )
+          ).rows[0]
+        : null;
+      if (
+        !bucket ||
+        (bucket.archived && previous?.bucket_id !== parsed.bucket_id)
+      )
+        throw Error("Bucket unavailable");
+    }
     const entries = Object.entries(parsed);
     const fields = entries.map(([k]) => k);
     const values = entries.map(([, v]) => v);
@@ -80,27 +112,44 @@ export async function captureTasks(
   input: unknown,
   now = new Date(),
 ): Promise<Task[]> {
-  const { request_id, lines } = z
+  const { request_id, lines, defaults } = z
     .object({
       request_id: z.string().uuid(),
       lines: z.array(z.string().trim().min(1).max(1000)).min(1).max(200),
+      defaults: captureDefaultsSchema.default({}),
     })
     .parse(input);
   await c.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
     userId + request_id,
   ]);
   const prior = await c.query(
-    "select lines, records from capture_batches where user_id=$1 and request_id=$2",
+    "select lines, records, defaults from capture_batches where user_id=$1 and request_id=$2",
     [userId, request_id],
   );
   if (prior.rows.length) {
-    if (JSON.stringify(prior.rows[0].lines) !== JSON.stringify(lines))
+    if (
+      JSON.stringify(prior.rows[0].lines) !== JSON.stringify(lines) ||
+      JSON.stringify(captureDefaultsSchema.parse(prior.rows[0].defaults)) !==
+        JSON.stringify(defaults)
+    )
       throw Error("Capture request already used");
-    return prior.rows[0].records;
+    // A retry must not resurrect deleted tasks or overwrite later edits with the receipt snapshot.
+    const ids = (prior.rows[0].records as Task[]).map((t) => t.id);
+    const current = await c.query(
+      "select * from tasks where id=any($1::uuid[]) and user_id=$2",
+      [ids, userId],
+    );
+    return ids
+      .map((id) => current.rows.find((t) => t.id === id))
+      .filter(Boolean)
+      .map(normalise) as Task[];
   }
   // Validate the entire payload before writing any record.
+  const library = await organisationRecords(c);
   const values = lines.map((line) =>
-    taskSchema.parse(parseCapture(line, today(now))),
+    taskSchema.parse(
+      parseTaskInput(line, library.buckets, library.tags, today(now), defaults),
+    ),
   );
   const records: Task[] = [];
   for (const value of values)
@@ -108,8 +157,14 @@ export async function captureTasks(
       (await writeRecord(c, userId, "tasks", "save", value, null)) as Task,
     );
   await c.query(
-    "insert into capture_batches(user_id,request_id,lines,records) values($1,$2,$3::jsonb,$4::jsonb)",
-    [userId, request_id, JSON.stringify(lines), JSON.stringify(records)],
+    "insert into capture_batches(user_id,request_id,lines,records,defaults) values($1,$2,$3::jsonb,$4::jsonb,$5::jsonb)",
+    [
+      userId,
+      request_id,
+      JSON.stringify(lines),
+      JSON.stringify(records),
+      JSON.stringify(defaults),
+    ],
   );
   return records;
 }
