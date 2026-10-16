@@ -6,7 +6,11 @@ import { asUser } from "@/lib/db";
 import { loadRecords, writeRecord, captureTasks } from "@/lib/records";
 import { saveContact, recordVisit, peopleRecords } from "@/lib/people-records";
 import { z } from "zod";
-import { organise, organisationRecords } from "@/lib/organisation-records";
+import {
+  assignTaskBuckets,
+  organise,
+  organisationRecords,
+} from "@/lib/organisation-records";
 export async function GET(req: NextRequest) {
   try {
     const user = await currentUser();
@@ -66,6 +70,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         await asUser(user.id, (c) => workbenchAction(c, user.id, b)),
       );
+    if (b.action === "tasks_bucket")
+      return NextResponse.json(
+        await asUser(user.id, (c) => assignTaskBuckets(c, user.id, b)),
+      );
     if (b.action === "recurrence")
       return NextResponse.json({
         record: await asUser(user.id, (c) => recurrenceAction(c, user.id, b)),
@@ -103,7 +111,7 @@ export async function POST(req: NextRequest) {
       e instanceof z.ZodError
         ? "Check required fields and dates."
         : e instanceof Error &&
-            /steps|progress|references|Import request|Refresh|http or https/.test(
+            /steps|progress|references|Import request|Refresh|http or https|selected tasks are unavailable|Bucket unavailable/.test(
               e.message,
             )
           ? e.message

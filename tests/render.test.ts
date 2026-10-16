@@ -6,7 +6,11 @@ import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { readFile, writeFile } from "node:fs/promises";
 import { authOptions } from "../lib/auth-config";
-import { organise, organisationRecords } from "../lib/organisation-records";
+import {
+  assignTaskBuckets,
+  organise,
+  organisationRecords,
+} from "../lib/organisation-records";
 import { advanceRecurring, recurrenceAction } from "../lib/recurrence-records";
 import {
   saveNotificationSettings,
@@ -1335,6 +1339,130 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
         operation: "pause",
       }),
     /Series unavailable/,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${other}',true)`,
+  );
+  const foreignBucket = (await c.query("select id from buckets limit 1"))
+    .rows[0].id;
+  const foreignTask = await writeRecord(
+    c,
+    other,
+    "tasks",
+    "save",
+    { title: "Other owner's task" },
+    null,
+  );
+  await pg.client.exec("COMMIT");
+  await pg.client.exec(
+    `BEGIN;SET LOCAL ROLE hub_app;select set_config('hub.user_id','${owner}',true)`,
+  );
+  const bulkBucket = await organise(c, owner, {
+    action: "bucket_save",
+    value: { name: "Bulk test bucket" },
+  });
+  const bulkProject = await writeRecord(
+    c,
+    owner,
+    "projects",
+    "save",
+    { name: "Bulk membership project" },
+    null,
+  );
+  const bulkA = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Bulk task A",
+      project_id: bulkProject.id,
+      notes: "Keep the latest notes",
+      classification: "Downtime",
+      task_type: "Discuss",
+      due_date: "2026-12-01",
+      tags: ["Research"],
+    },
+    null,
+  );
+  const bulkB = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Bulk task B",
+      status: "In Progress",
+      next_action: "Keep my next action",
+    },
+    null,
+  );
+  const bulkIds = [bulkA.id, bulkB.id];
+  const result = await assignTaskBuckets(c, owner, {
+    ids: [...bulkIds, bulkA.id],
+    bucket_id: bulkBucket.id,
+  });
+  assert.deepEqual(
+    new Set(result.ids),
+    new Set(bulkIds),
+    "duplicate selection IDs update each task once",
+  );
+  const bulkRows = (await loadRecords(c)).tasks.filter((t) =>
+    bulkIds.includes(t.id),
+  );
+  assert.ok(bulkRows.every((t) => t.bucket_id === bulkBucket.id));
+  for (const original of [bulkA, bulkB]) {
+    const current = bulkRows.find((t) => t.id === original.id)!;
+    const {
+      bucket_id: oldBucket,
+      updated_at: oldUpdated,
+      ...before
+    } = original;
+    const { bucket_id: newBucket, updated_at: newUpdated, ...after } = current;
+    assert.deepEqual(
+      after,
+      before,
+      "bulk membership preserves every other task field",
+    );
+  }
+  await assert.rejects(
+    () =>
+      assignTaskBuckets(c, owner, {
+        ids: [bulkA.id, foreignTask.id],
+        bucket_id: vwx.id,
+      }),
+    /selected tasks are unavailable/,
+  );
+  assert.equal(
+    (await c.query("select bucket_id from tasks where id=$1", [bulkA.id]))
+      .rows[0].bucket_id,
+    bulkBucket.id,
+    "a mixed invalid selection changes nothing",
+  );
+  await assert.rejects(
+    () =>
+      assignTaskBuckets(c, owner, { ids: bulkIds, bucket_id: foreignBucket }),
+    /Bucket unavailable/,
+  );
+  await organise(c, owner, {
+    action: "bucket_save",
+    id: bulkBucket.id,
+    value: { name: "Bulk test bucket", archived: true },
+  });
+  await assert.rejects(
+    () =>
+      assignTaskBuckets(c, owner, { ids: bulkIds, bucket_id: bulkBucket.id }),
+    /Bucket unavailable/,
+  );
+  await assert.rejects(() =>
+    assignTaskBuckets(c, owner, { ids: [], bucket_id: null }),
+  );
+  await assignTaskBuckets(c, owner, { ids: bulkIds, bucket_id: null });
+  assert.ok(
+    (await loadRecords(c)).tasks
+      .filter((t) => bulkIds.includes(t.id))
+      .every((t) => t.bucket_id === null),
   );
   await pg.client.exec("COMMIT");
   await db.destroy();
