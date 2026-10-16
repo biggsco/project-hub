@@ -114,6 +114,8 @@ export default function Hub({
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [bucketFilter, setBucketFilter] = useState("");
+  const [bulkBucket, setBulkBucket] = useState("");
+  const [bulkNotice, setBulkNotice] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [grouped, setGrouped] = useState(true);
   const pendingTaskIds = useRef(new Set<string>());
@@ -362,6 +364,45 @@ export default function Hub({
     );
     return b;
   }
+  async function assignSelectedBucket() {
+    if (
+      busy ||
+      !bulkBucket ||
+      !selected.length ||
+      selected.some((id) => pendingTaskIds.current.has(id))
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setBulkNotice("");
+    try {
+      const r = await fetch("/api/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "tasks_bucket",
+          ids: selected,
+          bucket_id: bulkBucket === "none" ? null : bulkBucket,
+        }),
+      });
+      const b = await r.json();
+      if (!r.ok) throw Error(b.error || "Unable to assign buckets.");
+      const changed = new Set<string>(b.ids);
+      setTasks((current) =>
+        current.map((t) =>
+          changed.has(t.id) ? { ...t, bucket_id: b.bucket_id } : t,
+        ),
+      );
+      setSelected([]);
+      setBulkNotice(
+        `${changed.size} ${changed.size === 1 ? "task" : "tasks"} ${b.bucket_id ? "assigned to " + (buckets.find((bucket) => bucket.id === b.bucket_id)?.name || "bucket") : "removed from their bucket"}.`,
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function mutate(
     table: "tasks" | "projects",
     value: any,
@@ -461,6 +502,8 @@ export default function Hub({
     return await manage({ action: "bucket_save", value: { name } });
   }
   function go(s: string) {
+    setBulkNotice("");
+    setBulkBucket("");
     history.replaceState(null, "", "/");
     setSection(s);
     setSelectedProject(null);
@@ -687,6 +730,12 @@ export default function Hub({
       inboxScope,
     ],
   );
+  useEffect(() => {
+    if (section === "Inbox")
+      setSelected((current) =>
+        current.filter((id) => visible.some((t) => t.id === id)),
+      );
+  }, [visible, section]);
   function taskRow(t: Task, focus = false) {
     return (
       <div className="task-row" key={t.id}>
@@ -1816,9 +1865,50 @@ export default function Hub({
                   </button>
                 </div>
               </details>
+              {section === "Inbox" && bulkNotice && (
+                <p role="status" className="muted">
+                  {bulkNotice}
+                </p>
+              )}
               {selected.length > 0 && (
                 <div className="bulk">
                   {selected.length} selected
+                  {section === "Inbox" && (
+                    <>
+                      <label className="bulk-bucket-label">
+                        Bucket
+                        <select
+                          aria-label="Bucket for selected tasks"
+                          value={bulkBucket}
+                          disabled={busy}
+                          onChange={(e) => setBulkBucket(e.target.value)}
+                        >
+                          <option value="">Choose a bucket…</option>
+                          <option value="none">No bucket</option>
+                          {buckets
+                            .filter((b) => !b.archived)
+                            .map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <button
+                        disabled={
+                          busy ||
+                          !bulkBucket ||
+                          selected.some((id) => pendingTasks.includes(id))
+                        }
+                        onClick={assignSelectedBucket}
+                      >
+                        Apply bucket
+                      </button>
+                      <button disabled={busy} onClick={() => setSelected([])}>
+                        Clear selection
+                      </button>
+                    </>
+                  )}
                   <button
                     disabled={busy}
                     onClick={async () => {
@@ -1895,6 +1985,30 @@ export default function Hub({
                 <section className="panel task-list">
                   <div className="section-heading">
                     <h2>{visible.length} tasks</h2>
+                    {section === "Inbox" && visible.length > 0 && (
+                      <label className="bulk-select-all">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all visible Inbox tasks"
+                          disabled={busy}
+                          checked={visible.every((t) =>
+                            selected.includes(t.id),
+                          )}
+                          ref={(node) => {
+                            if (node)
+                              node.indeterminate =
+                                visible.some((t) => selected.includes(t.id)) &&
+                                !visible.every((t) => selected.includes(t.id));
+                          }}
+                          onChange={(e) =>
+                            setSelected(
+                              e.target.checked ? visible.map((t) => t.id) : [],
+                            )
+                          }
+                        />
+                        Select all
+                      </label>
+                    )}
                     <span className="muted">
                       Sorted by {sort === "due" ? "due date" : sort}
                     </span>
@@ -1958,6 +2072,7 @@ export default function Hub({
                           <input
                             type="checkbox"
                             aria-label={"Select " + t.title}
+                            disabled={busy}
                             checked={selected.includes(t.id)}
                             onChange={(e) =>
                               setSelected(

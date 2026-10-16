@@ -155,3 +155,43 @@ export async function organise(c: QueryClient, userId: string, input: unknown) {
     );
   return record;
 }
+
+/** Only patch membership, so a bulk move cannot overwrite newer task edits. Called in asUser. */
+export async function assignTaskBuckets(
+  c: QueryClient,
+  userId: string,
+  input: unknown,
+) {
+  const value = z
+    .object({
+      ids: z.array(z.string().uuid()).min(1).max(1000),
+      bucket_id: z.string().uuid().nullable(),
+    })
+    .parse(input);
+  const ids = [...new Set(value.ids)];
+  await c.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
+    userId,
+  ]);
+  const tasks = await c.query(
+    "select id from tasks where id=any($1::uuid[]) and user_id=$2 for update",
+    [ids, userId],
+  );
+  if (tasks.rows.length !== ids.length)
+    throw Error(
+      "Some selected tasks are unavailable. Refresh and select them again.",
+    );
+  if (value.bucket_id) {
+    const bucket = (
+      await c.query(
+        "select id from buckets where id=$1 and user_id=$2 and not archived for share",
+        [value.bucket_id, userId],
+      )
+    ).rows[0];
+    if (!bucket) throw Error("Bucket unavailable. Choose an active bucket.");
+  }
+  await c.query(
+    "update tasks set bucket_id=$1 where id=any($2::uuid[]) and user_id=$3 and bucket_id is distinct from $1",
+    [value.bucket_id, ids, userId],
+  );
+  return { ids, bucket_id: value.bucket_id };
+}
