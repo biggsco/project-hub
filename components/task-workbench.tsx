@@ -318,6 +318,19 @@ export default function TaskWorkbench({
             Paste Steps
           </button>
         </div>
+        {children.length > 0 && (
+          <span className="subtask-progress workbench-progress">
+            <progress
+              aria-label="Task checklist progress"
+              max={children.length}
+              value={children.filter((t) => t.status === "Completed").length}
+            />
+            <small>
+              {children.filter((t) => t.status === "Completed").length} of{" "}
+              {children.length} steps complete
+            </small>
+          </span>
+        )}
         {children.map((s, i) => (
           <div className="workbench-subtask" key={s.id}>
             <input

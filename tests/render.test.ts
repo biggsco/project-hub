@@ -19,10 +19,16 @@ import {
 } from "../lib/notification-records";
 import { enqueueForUser, claimDelivery } from "../lib/jobs";
 import { today } from "../lib/model";
+import { planningPatch } from "../lib/planning";
 import { workbenchAction } from "../lib/workbench-records";
 import { saveContact, peopleRecords, recordVisit } from "../lib/people-records";
 import { provision } from "../lib/provision";
-import { writeRecord, loadRecords, captureTasks } from "../lib/records";
+import {
+  writeRecord,
+  loadRecords,
+  captureTasks,
+  planTask,
+} from "../lib/records";
 test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", async () => {
   const pg = new KyselyPGlite();
   const db = new Kysely<any>({ dialect: pg.dialect });
@@ -1463,6 +1469,61 @@ test("Render PostgreSQL migration, app workflows, RLS and Better Auth login", as
     (await loadRecords(c)).tasks
       .filter((t) => bulkIds.includes(t.id))
       .every((t) => t.bucket_id === null),
+  );
+  const plannedTask = await writeRecord(
+    c,
+    owner,
+    "tasks",
+    "save",
+    {
+      title: "Firm deadline, flexible work",
+      due_date: "2026-10-20",
+      follow_up_date: "2026-10-18",
+    },
+    null,
+  );
+  for (const lane of ["Today", "Tomorrow", "This Week", "Later"] as const) {
+    const patch = planningPatch(lane, "2026-10-16");
+    await planTask(c, owner, { id: plannedTask.id, ...patch });
+    const saved = (await loadRecords(c)).tasks.find(
+      (t) => t.id === plannedTask.id,
+    )!;
+    assert.equal(
+      saved.planned_for,
+      patch.planned_for,
+      "flexible moves survive database reload",
+    );
+    assert.equal(
+      saved.due_date,
+      "2026-10-20",
+      "planning never moves firm deadlines",
+    );
+    assert.equal(
+      saved.follow_up_date,
+      "2026-10-18",
+      "planning never moves follow-ups",
+    );
+  }
+  await c.query(
+    "update tasks set due_date='2026-12-01', notes='Changed in another tab' where id=$1",
+    [plannedTask.id],
+  );
+  const freshPlan = await planTask(c, owner, {
+    id: plannedTask.id,
+    planned_for: "2026-10-16",
+  });
+  assert.equal(
+    freshPlan.due_date,
+    "2026-12-01",
+    "a stale planning card cannot overwrite a newer firm deadline",
+  );
+  assert.equal(freshPlan.notes, "Changed in another tab");
+  await assert.rejects(
+    () => planTask(c, owner, { id: foreignTask.id, planned_for: "2026-10-16" }),
+    /access denied/,
+  );
+  await assert.rejects(() =>
+    planTask(c, owner, { id: plannedTask.id, planned_for: "2026-02-31" }),
   );
   await pg.client.exec("COMMIT");
   await db.destroy();

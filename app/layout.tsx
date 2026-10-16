@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./design-system.css";
 import Pwa from "@/components/pwa";
 import type { Metadata } from "next";
 export const metadata: Metadata = {
