@@ -1,79 +1,136 @@
 "use client";
-import { useState } from "react";
-import { today, addDays, type Task } from "@/lib/model";
-import { suggestedPlan } from "@/lib/planning";
-import SmartDate from "./smart-date";
+import { useMemo, useRef, useState } from "react";
+import type { Task } from "@/lib/model";
+import {
+  planningBoard,
+  planningLanes,
+  planningPatch,
+  type PlanningLane,
+} from "@/lib/planning";
+import type { WorkspaceLibrary } from "@/lib/workspace-style";
+import TaskCard from "./task-card";
 export default function SuggestedPlan({
   tasks,
+  library,
   onPatch,
   onOpen,
   onComplete,
 }: {
   tasks: Task[];
+  library: WorkspaceLibrary;
   onPatch: (t: Task, p: Partial<Task>) => Promise<boolean>;
   onOpen: (t: Task) => void;
   onComplete: (t: Task) => void;
 }) {
-  const [skipped, setSkipped] = useState<string[]>([]);
-  const plan = suggestedPlan(tasks, undefined, skipped);
+  const board = useMemo(() => planningBoard(tasks), [tasks]),
+    [limit, setLimit] = useState(20),
+    [pending, setPending] = useState<string[]>([]),
+    lock = useRef(new Set<string>()),
+    [message, setMessage] = useState("");
+  async function move(id: string, lane: PlanningLane) {
+    const task = tasks.find((t) => t.id === id);
+    if (!task || lock.current.has(id)) return;
+    lock.current.add(id);
+    setPending([...lock.current]);
+    try {
+      const saved = await onPatch(task, planningPatch(lane));
+      setMessage(
+        saved
+          ? `Moved to ${lane}. Deadline unchanged.`
+          : "Could not move task. Please try again.",
+      );
+    } finally {
+      lock.current.delete(id);
+      setPending([...lock.current]);
+    }
+  }
   return (
-    <section className="panel suggested-plan">
-      <h2>Suggested Plan</h2>
+    <section className="planning-workspace">
       <p className="muted">
-        A few useful choices, not a calendar commitment. Flexible work dates can
-        move; firm deadlines stay put.
+        A flexible place to plan. Move unfinished work whenever you like; firm
+        deadlines stay put.
       </p>
-      {(
-        [
-          ["Today", plan.today],
-          ["Coming week", plan.week],
-        ] as [string, Task[]][]
-      ).map(([label, rows]) => (
-        <div key={label}>
-          <h3>{label}</h3>
-          {!rows.length && <p className="muted">No more suggestions here.</p>}
-          {rows.map((t) => (
-            <article className="radar-row" key={t.id}>
-              <button className="task-title" onClick={() => onOpen(t)}>
-                <strong>{t.title}</strong>
-                <small>
-                  {t.next_action ||
-                    (t.follow_up_date && `Follow up ${t.follow_up_date}`) ||
-                    (t.due_date && `Deadline ${t.due_date}`) ||
-                    "Flexible work"}
-                </small>
-              </button>
-              <div className="inline-actions">
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    onPatch(t, {
-                      planned_for:
-                        label === "Today" ? today() : addDays(today(), 1),
-                    })
-                  }
-                >
-                  {t.planned_for ? `Accepted · ${t.planned_for}` : "Accept"}
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => setSkipped((v) => [...v, t.id])}
-                >
-                  Skip
-                </button>
-                <SmartDate
-                  label={`Move work date ${t.title}`}
-                  value={t.planned_for}
-                  onChange={(planned_for) => onPatch(t, { planned_for })}
+      <p className="planning-status" role="status">
+        {message}
+      </p>
+      <div className="planning-board">
+        {planningLanes.map((lane) => (
+          <section
+            className="planning-lane"
+            key={lane}
+            aria-label={`${lane} plan`}
+            onDragOver={(e) => {
+              if (
+                e.dataTransfer.types.includes("application/x-project-hub-task")
+              )
+                e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              void move(
+                e.dataTransfer.getData("application/x-project-hub-task"),
+                lane,
+              );
+            }}
+          >
+            <h2>
+              {lane}
+              <span>{board[lane].length}</span>
+            </h2>
+            {board[lane].slice(0, limit).map((task) => (
+              <div
+                key={task.id}
+                className="planning-item"
+                draggable={!pending.includes(task.id)}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(
+                    "application/x-project-hub-task",
+                    task.id,
+                  );
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+              >
+                <TaskCard
+                  task={task}
+                  tasks={tasks}
+                  library={library}
+                  onOpen={onOpen}
+                  onComplete={onComplete}
+                  busy={pending.includes(task.id)}
                 />
-                <button className="text-button" onClick={() => onComplete(t)}>
-                  Complete
-                </button>
+                <label className="move-task">
+                  Move to
+                  <select
+                    aria-label={`Move ${task.title}`}
+                    value={lane}
+                    disabled={pending.includes(task.id)}
+                    onChange={(e) =>
+                      void move(task.id, e.target.value as PlanningLane)
+                    }
+                  >
+                    {planningLanes.map((l) => (
+                      <option key={l}>{l}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
-            </article>
-          ))}
-        </div>
-      ))}
+            ))}
+            {!board[lane].length && (
+              <p className="lane-empty">
+                Room to breathe. Move a task here when you’re ready.
+              </p>
+            )}
+            {board[lane].length > limit && (
+              <button
+                className="secondary"
+                onClick={() => setLimit((n) => n + 20)}
+              >
+                Show more {lane.toLowerCase()} tasks
+              </button>
+            )}
+          </section>
+        ))}
+      </div>
     </section>
   );
 }

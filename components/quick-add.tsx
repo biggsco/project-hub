@@ -1,4 +1,5 @@
 "use client";
+import { taskWorkspaceStyle } from "@/lib/workspace-style";
 import { recoverCaptures, recoverDraft } from "@/lib/capture-drafts";
 import { taskTypes, type Team, type Person } from "@/lib/people";
 import PeoplePicker from "./people-picker";
@@ -448,7 +449,14 @@ export default function QuickAdd({
           </button>
         </div>
       </details>
-      <div className="capture-hint">
+      <div
+        className="capture-hint"
+        style={taskWorkspaceStyle(parsed as Task, {
+          buckets,
+          teams,
+          projects: [],
+        })}
+      >
         <span>
           {text.trim()
             ? [

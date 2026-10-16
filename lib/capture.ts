@@ -152,6 +152,7 @@ export function actionable(t: Task, day = today()) {
   return (
     (t.content_type || "Task") === "Task" &&
     !t.archived &&
+    (!t.recurrence_date || t.recurrence_date <= day) &&
     t.status !== "Completed" &&
     t.status !== "Waiting" &&
     t.status !== "Blocked" &&

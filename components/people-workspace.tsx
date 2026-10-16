@@ -1,4 +1,5 @@
 "use client";
+import { workspaceStyle } from "@/lib/workspace-style";
 import { useState, type ReactNode } from "react";
 import { type Task, today, statuses } from "@/lib/model";
 import {
@@ -79,6 +80,7 @@ export default function PeopleWorkspace({
             <button
               className={"people-card " + (teamId === t.id ? "selected" : "")}
               key={t.id}
+              style={workspaceStyle(t.name, t.aliases)}
               onClick={() => onSelect(t.id, null)}
             >
               <strong>

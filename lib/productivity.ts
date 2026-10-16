@@ -46,6 +46,7 @@ export function recommendTasks(
     .filter(
       (t) =>
         inFocus(t, day) &&
+        (!t.recurrence_date || t.recurrence_date <= day) &&
         (!t.depends_on_id ||
           tasks.some(
             (p) => p.id === t.depends_on_id && p.status === "Completed",

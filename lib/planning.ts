@@ -38,3 +38,51 @@ export function suggestedPlan(
       .map((r) => r.task),
   };
 }
+
+export const planningLanes = [
+  "Today",
+  "Tomorrow",
+  "This Week",
+  "Later",
+] as const;
+export type PlanningLane = (typeof planningLanes)[number];
+/** Only personal work dates change. Firm deadlines and follow-ups are independent. */
+export function planningPatch(
+  lane: PlanningLane,
+  day = today(),
+): Pick<Task, "planned_for"> {
+  return {
+    planned_for:
+      lane === "Today"
+        ? day
+        : addDays(day, lane === "Tomorrow" ? 1 : lane === "This Week" ? 2 : 7),
+  };
+}
+export function planningBoard(tasks: Task[], day = today()) {
+  const suggestions = suggestedPlan(tasks, day),
+    todayIds = new Set(suggestions.today.map((t) => t.id));
+  const board: Record<PlanningLane, Task[]> = {
+    Today: [],
+    Tomorrow: [],
+    "This Week": [],
+    Later: [],
+  };
+  for (const { task } of recommendTasks(tasks, { day })) {
+    if (task.parent_id || (task.recurrence_date && task.recurrence_date > day))
+      continue;
+    const date = task.planned_for || task.suggested_start;
+    const lane: PlanningLane = date
+      ? date <= day
+        ? "Today"
+        : date === addDays(day, 1)
+          ? "Tomorrow"
+          : date <= addDays(day, 6)
+            ? "This Week"
+            : "Later"
+      : todayIds.has(task.id)
+        ? "Today"
+        : "Later";
+    board[lane].push(task);
+  }
+  return board;
+}

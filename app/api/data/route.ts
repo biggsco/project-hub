@@ -3,7 +3,12 @@ import { workbenchAction } from "@/lib/workbench-records";
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@/lib/auth";
 import { asUser } from "@/lib/db";
-import { loadRecords, writeRecord, captureTasks } from "@/lib/records";
+import {
+  loadRecords,
+  writeRecord,
+  captureTasks,
+  planTask,
+} from "@/lib/records";
 import { saveContact, recordVisit, peopleRecords } from "@/lib/people-records";
 import { z } from "zod";
 import {
@@ -70,6 +75,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         await asUser(user.id, (c) => workbenchAction(c, user.id, b)),
       );
+    if (b.action === "task_plan")
+      return NextResponse.json({
+        record: await asUser(user.id, (c) => planTask(c, user.id, b)),
+      });
     if (b.action === "tasks_bucket")
       return NextResponse.json(
         await asUser(user.id, (c) => assignTaskBuckets(c, user.id, b)),

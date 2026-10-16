@@ -306,3 +306,23 @@ export async function captureTasks(
   );
   return records;
 }
+
+/** A planning move patches only the flexible date, including when another tab edits a deadline. */
+export async function planTask(c: QueryClient, userId: string, input: unknown) {
+  const value = z
+    .object({
+      id: z.string().uuid(),
+      planned_for: taskSchema.shape.planned_for,
+    })
+    .parse(input);
+  await c.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
+    userId,
+  ]);
+  const result = await c.query(
+    "update tasks set planned_for=$1 where id=$2 and user_id=$3 returning *",
+    [value.planned_for, value.id, userId],
+  );
+  if (result.rows.length !== 1)
+    throw Error("Record not found or access denied");
+  return normalise(result.rows[0]) as Task;
+}

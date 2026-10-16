@@ -2,7 +2,13 @@
 import NotificationSettingsPanel from "./notification-settings";
 import SuggestedPlan from "./suggested-plan";
 import RecurrenceControls from "./recurrence-controls";
-import CalmHome from "./calm-home";
+import CalmHome, { DailyMomentum } from "./calm-home";
+import TaskCard from "./task-card";
+import {
+  taskWorkspace,
+  taskWorkspaceStyle,
+  workspaceStyle,
+} from "@/lib/workspace-style";
 import Achievements from "./achievements";
 import FollowUpRadar from "./follow-up-radar";
 import WeeklyReset from "./weekly-reset";
@@ -115,6 +121,13 @@ export default function Hub({
   const [tags, setTags] = useState<Tag[]>([]);
   const [bucketFilter, setBucketFilter] = useState("");
   const [bulkBucket, setBulkBucket] = useState("");
+  const [completionNotice, setCompletionNotice] = useState("");
+  useEffect(() => {
+    if (completionNotice) {
+      const timeout = setTimeout(() => setCompletionNotice(""), 3500);
+      return () => clearTimeout(timeout);
+    }
+  }, [completionNotice]);
   const [bulkNotice, setBulkNotice] = useState("");
   const [tagFilter, setTagFilter] = useState<string[]>([]);
   const [grouped, setGrouped] = useState(true);
@@ -296,12 +309,16 @@ export default function Hub({
       const r = await fetch("/api/data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          table: "tasks",
-          action: "save",
-          id: t.id,
-          value: { ...t, ...patch },
-        }),
+        body: JSON.stringify(
+          Object.keys(patch).length === 1 && "planned_for" in patch
+            ? { action: "task_plan", id: t.id, planned_for: patch.planned_for }
+            : {
+                table: "tasks",
+                action: "save",
+                id: t.id,
+                value: { ...t, ...patch },
+              },
+        ),
       });
       const b = await r.json();
       if (!r.ok) throw Error(b.error || "Unable to save task.");
@@ -315,6 +332,7 @@ export default function Hub({
       );
       if (b.people) setPeople(b.people);
       if (b.teams) setTeams(b.teams);
+      setCompletionNotice("Saved.");
       setActivity((current) =>
         [
           {
@@ -458,6 +476,11 @@ export default function Hub({
       if (!r.ok) throw Error(b.error || "Unable to update task.");
       setTasks((current) =>
         current.map((row) => (row.id === t.id ? b.record : row)),
+      );
+      setCompletionNotice(
+        t.status === "Completed"
+          ? "Task reopened."
+          : "Done. A little more room to move.",
       );
       setActivity((current) =>
         [
@@ -738,7 +761,13 @@ export default function Hub({
   }, [visible, section]);
   function taskRow(t: Task, focus = false) {
     return (
-      <div className="task-row" key={t.id}>
+      <div
+        className={
+          "task-row " + (t.status === "Completed" ? "is-complete" : "")
+        }
+        key={t.id}
+        style={taskWorkspaceStyle(t, { teams, buckets, projects })}
+      >
         {t.content_type === "Task" && (
           <button
             disabled={busy || pendingTasks.includes(t.id)}
@@ -760,82 +789,12 @@ export default function Hub({
           onClick={() => edit(t)}
         >
           <strong>{t.title}</strong>
-          {t.content_type !== "Task" && <small>{t.content_type}</small>}
-          <small className="row-metadata">
-            {projects.find((p) => p.id === t.project_id)?.name || "Personal"}
-            {t.parent_id ? " · Subtask" : ""}
-            {t.task_type !== "To Do" ? " · " + t.task_type : ""}
-            {t.team_id
-              ? " · " + teams.find((team) => team.id === t.team_id)?.name
-              : ""}
-            {t.person_id && t.person_id !== t.assigned_person_id
-              ? " · " + people.find((p) => p.id === t.person_id)?.name
-              : ""}
-            {t.person ? " · " + t.person : ""}
-            {t.bucket_id
-              ? " · " +
-                (buckets.find((b) => b.id === t.bucket_id)?.name || "Bucket")
-              : ""}
-            {t.tags.length ? " · " + t.tags.join(", ") : ""}
-            {t.classification !== "Standard" ? " · " + t.classification : ""}
-            {t.assigned_to ? " · Waiting on " + t.assigned_to : ""}
-            {t.effort_minutes
-              ? " · " + efforts.find(([n]) => n === t.effort_minutes)?.[1]
-              : ""}
-            {t.is_milestone ? " · Milestone" : ""}
-            {t.snoozed_until && t.snoozed_until > day
-              ? " · Snoozed until " + formatDate(t.snoozed_until)
-              : ""}
-            {t.next_action ? " · Next: " + t.next_action : ""}
-            {t.follow_up_date && t.assigned_to
-              ? " · Follow up " + formatDate(t.follow_up_date)
-              : ""}
+          <small className="row-workspace">
+            <i />
+            {taskWorkspace(t, { teams, buckets, projects }).name}
           </small>
+          {t.content_type !== "Task" && <small>{t.content_type}</small>}
         </button>
-        {t.priority !== "None" && (
-          <span className={"badge p-" + t.priority}>{t.priority}</span>
-        )}
-        {t.content_type === "Task" && (
-          <select
-            aria-label={"Status for " + t.title}
-            value={t.status}
-            disabled={busy || pendingTasks.includes(t.id)}
-            onChange={(e) =>
-              mutate("tasks", { ...t, status: e.target.value }, t.id)
-            }
-          >
-            {statuses.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
-        )}
-        {t.content_type === "Task" && (
-          <div
-            className={
-              "date " +
-              (t.classification !== "Ongoing" &&
-              t.status !== "Completed" &&
-              !t.archived &&
-              t.due_date &&
-              t.due_date < day
-                ? "late"
-                : "")
-            }
-          >
-            <SmartDate
-              label={"Deadline for " + t.title}
-              value={t.due_date}
-              someday={t.date_preferences.due_date === "Someday"}
-              disabled={busy || pendingTasks.includes(t.id)}
-              onChange={(due_date, someday) => {
-                const date_preferences = { ...t.date_preferences };
-                delete date_preferences.due_date;
-                if (someday) date_preferences.due_date = "Someday";
-                mutate("tasks", { ...t, due_date, date_preferences }, t.id);
-              }}
-            />
-          </div>
-        )}
         {t.content_type === "Task" ? (
           <TaskTools
             task={t}
@@ -866,6 +825,7 @@ export default function Hub({
     return (
       <button
         className="project-card"
+        style={workspaceStyle(p.name)}
         key={p.id}
         onClick={() => {
           go("Projects");
@@ -971,6 +931,14 @@ export default function Hub({
         </div>
       </aside>
       <main className="workspace">
+        <div
+          className={
+            "completion-feedback " + (completionNotice ? "visible" : "")
+          }
+          role="status"
+        >
+          {completionNotice && <Check size={16} />} {completionNotice}
+        </div>
         <header>
           <button
             className="mobile-menu"
@@ -1069,6 +1037,43 @@ export default function Hub({
             </label>
           )}
 
+          {section === "Dashboard" && (
+            <div className="page-heading home-welcome">
+              <div>
+                <p className="eyebrow">
+                  {new Intl.DateTimeFormat("en-AU", {
+                    timeZone: "Australia/Adelaide",
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  }).format(new Date())}
+                </p>
+                <h1>
+                  {Number(
+                    new Intl.DateTimeFormat("en-AU", {
+                      timeZone: "Australia/Adelaide",
+                      hour: "numeric",
+                      hour12: false,
+                    }).format(new Date()),
+                  ) < 12
+                    ? "Good morning."
+                    : Number(
+                          new Intl.DateTimeFormat("en-AU", {
+                            timeZone: "Australia/Adelaide",
+                            hour: "numeric",
+                            hour12: false,
+                          }).format(new Date()),
+                        ) < 18
+                      ? "Good afternoon."
+                      : "Good evening."}
+                </h1>
+                <p className="muted">
+                  A little space to think. One useful step at a time.
+                </p>
+              </div>
+              <DailyMomentum tasks={tasks} />
+            </div>
+          )}
           <QuickAdd
             draftKey={`hub-capture:${email}`}
             buckets={buckets}
@@ -1120,41 +1125,32 @@ export default function Hub({
               );
             }}
           />
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">
-                {section === "Dashboard"
-                  ? new Intl.DateTimeFormat("en-AU", {
-                      timeZone: "Australia/Adelaide",
-                      weekday: "long",
-                      day: "numeric",
-                      month: "long",
-                    }).format(new Date())
-                  : "YOUR WORKSPACE"}
-              </p>
-              <h1>{section === "Dashboard" ? "Your day, in focus." : title}</h1>
-              <p className="muted">
-                {section === "Dashboard"
-                  ? "A clear view of what matters and what comes next."
-                  : project?.description || descriptions[section]}
-              </p>
+          {section !== "Dashboard" && (
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">YOUR WORKSPACE</p>
+                <h1>{title}</h1>
+                <p className="muted">
+                  {project?.description || descriptions[section]}
+                </p>
+              </div>
+              {section === "Projects" && (
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    setEditor({
+                      table: "projects",
+                      id: project?.id,
+                      value: project ? { ...project } : { ...emptyProject },
+                    })
+                  }
+                >
+                  <Plus size={16} />
+                  {project ? "Edit project" : "New project"}
+                </button>
+              )}
             </div>
-            {section === "Projects" && (
-              <button
-                className="secondary"
-                onClick={() =>
-                  setEditor({
-                    table: "projects",
-                    id: project?.id,
-                    value: project ? { ...project } : { ...emptyProject },
-                  })
-                }
-              >
-                <Plus size={16} />
-                {project ? "Edit project" : "New project"}
-              </button>
-            )}
-          </div>
+          )}
           {section === "Projects" && !selectedProject && (
             <div className="filters">
               <TagFilter
@@ -1291,6 +1287,7 @@ export default function Hub({
           ) : section === "Suggested Plan" ? (
             <SuggestedPlan
               tasks={tasks}
+              library={{ teams, buckets, projects }}
               onPatch={patchTask}
               onOpen={edit}
               onComplete={completeTask}
@@ -1325,6 +1322,12 @@ export default function Hub({
             />
           ) : section === "Dashboard" ? (
             <CalmHome
+              buckets={buckets}
+              onPatch={patchTask}
+              onBucket={(id) => {
+                go("My Tasks");
+                setBucketFilter(id);
+              }}
               tasks={tasks}
               projects={projects}
               teams={teams}
@@ -1958,25 +1961,15 @@ export default function Hub({
                       {visible
                         .filter((t) => t.status === s)
                         .map((t) => (
-                          <button
+                          <TaskCard
                             key={t.id}
-                            className="kanban-card"
-                            onClick={() => edit(t)}
-                          >
-                            <strong>{t.title}</strong>
-                            {t.priority !== "None" && (
-                              <span className={"badge p-" + t.priority}>
-                                {t.priority}
-                              </span>
-                            )}
-                            <small>
-                              {t.due_date
-                                ? formatDate(t.due_date)
-                                : t.date_preferences.due_date === "Someday"
-                                  ? "Someday"
-                                  : "No deadline"}
-                            </small>
-                          </button>
+                            task={t}
+                            tasks={tasks}
+                            library={{ teams, buckets, projects }}
+                            onOpen={edit}
+                            onComplete={completeTask}
+                            busy={pendingTasks.includes(t.id)}
+                          />
                         ))}
                     </section>
                   ))}
@@ -2037,6 +2030,10 @@ export default function Hub({
                         return (
                           <section
                             className="bucket-group"
+                            style={workspaceStyle(
+                              bucket.name,
+                              buckets.find((b) => b.id === bucket.id)?.aliases,
+                            )}
                             key={bucket.id || "none"}
                           >
                             <div className="section-heading">
